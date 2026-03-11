@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+/* ── Theme: Light (default) ─────────────────────────────────────────────────
+   Variables are stored as space-separated RGB channels so Tailwind's
+   opacity modifier syntax (e.g. bg-nb-card/60) works correctly.           */
+:root {
+  --nb-deepest:      220 224 230;   /* #dce0e6 — title bar, tab strip    */
+  --nb-base:         242 244 247;   /* #f2f4f7 — main panels             */
+  --nb-card:         255 255 255;   /* #ffffff — cards, active tab       */
+  --nb-raised:       232 235 238;   /* #e8ebed — hover / input bg        */
+  --nb-hover:        214 217 222;   /* #d6d9de — pressed / active hover  */
+  --nb-border:       218 220 224;   /* #dadce0 — standard borders        */
+  --nb-border-soft:  236 238 241;   /* #eceef1 — subtle borders (≠ base) */
+  --nb-text:          32  33  36;   /* #202124 — primary text            */
+  --nb-text-soft:     68  71  70;   /* #444746 — body text               */
+  --nb-text-dim:     128 134 139;   /* #80868b — secondary / hint        */
+  --nb-text-muted:   154 160 166;   /* #9aa0a6 — placeholder / meta      */
+}
+
+/* ── Theme: Dark ────────────────────────────────────────────────────────── */
+.dark {
+  --nb-deepest:        3   7  18;   /* #030712                           */
+  --nb-base:          17  24  39;   /* #111827                           */
+  --nb-card:          31  41  55;   /* #1f2937                           */
+  --nb-raised:        55  65  81;   /* #374151                           */
+  --nb-hover:         75  85  99;   /* #4b5563                           */
+  --nb-border:        55  65  81;   /* #374151                           */
+  --nb-border-soft:   31  41  55;   /* #1f2937                           */
+  --nb-text:         249 250 251;   /* #f9fafb                           */
+  --nb-text-soft:    209 213 219;   /* #d1d5db                           */
+  --nb-text-dim:     156 163 175;   /* #9ca3af                           */
+  --nb-text-muted:   107 114 128;   /* #6b7280                           */
+}
+
+body {
+  margin: 0;
+  background: rgb(var(--nb-base));
+  color: rgb(var(--nb-text));
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgb(var(--nb-hover)); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--nb-text-muted)); }

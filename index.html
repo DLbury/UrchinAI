@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UrchinAI 浏览器</title>
+    <!-- Apply saved theme before first paint to avoid flash of wrong theme.
+         URL param ?theme= takes priority (used by detached tab windows). -->
+    <script>
+      (function () {
+        var params = new URLSearchParams(window.location.search)
+        var t = params.get('theme') || localStorage.getItem('urchin-theme') || 'dark'
+        if (t !== 'light' && t !== 'dark') t = 'dark'
+        document.documentElement.classList.add(t)
+        // Also persist it so useTheme hook stays in sync
+        try { localStorage.setItem('urchin-theme', t) } catch (_) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

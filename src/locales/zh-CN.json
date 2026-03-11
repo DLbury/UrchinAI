@@ -1,0 +1,111 @@
+{
+  "common": {
+    "newTab": "新标签页",
+    "searchOrUrl": "搜索或输入网址",
+    "addBookmark": "添加书签",
+    "removeBookmark": "取消书签",
+    "readingMode": "阅读模式",
+    "aiSummarize": "AI 总结页面",
+    "settings": "设置",
+    "collapseChat": "收起对话框",
+    "expandChat": "展开对话框",
+    "adBlockOn": "广告拦截已启用",
+    "adBlockOff": "广告拦截已关闭",
+    "clear": "清空",
+    "close": "关闭",
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "restore": "恢复"
+  },
+  "tabBar": {
+    "dragHint": "拖动排序 / 拖出窗口创建独立窗口"
+  },
+  "history": {
+    "title": "浏览历史",
+    "searchPlaceholder": "搜索历史...",
+    "empty": "暂无历史记录",
+    "clearAll": "清空历史"
+  },
+  "bookmarks": {
+    "title": "书签",
+    "empty": "暂无书签"
+  },
+  "sessions": {
+    "title": "会话管理",
+    "namePlaceholder": "会话名称...",
+    "empty": "暂无保存的会话",
+    "tabsCount": "{{count}} 个标签"
+  },
+  "chat": {
+    "title": "Urchin AI 对话",
+    "placeholder": "给智能体发消息…（Enter 发送，Shift+Enter 换行）",
+    "hint": "试试：「帮我打开百度，搜索 UrchinAI」",
+    "empty": "发送消息，开始与智能体对话",
+    "emptyHint": "智能体可以控制左侧的浏览器",
+    "clearHistory": "清空对话",
+    "status": {
+      "connecting": "连接中",
+      "connected": "已连接",
+      "disconnected": "已断开",
+      "error": "连接错误"
+    },
+    "toolArgs": "参数",
+    "toolResult": "结果"
+  },
+  "newTab": {
+    "searchPlaceholder": "搜索或输入网址...",
+    "quickAccess": "快速访问",
+    "recent": "最近访问",
+    "defaultLinks": "常用网站",
+    "addBookmarkHint": "点击地址栏右侧的书签图标可以添加书签，书签会显示在这里。"
+  },
+  "settings": {
+    "title": "系统设置",
+    "model": "模型与服务商",
+    "skills": "技能管理",
+    "mcp": "MCP 服务器",
+    "memory": "AI 记忆",
+    "appearance": "外观与动效",
+    "currentModel": "当前使用的模型",
+    "provider": "服务商",
+    "modelName": "模型名称",
+    "customInput": "自定义输入",
+    "fromPreset": "从预设选择",
+    "saveModel": "保存模型配置",
+    "saved": "已保存！",
+    "apiProviders": "API 服务商",
+    "add": "添加",
+    "installed": "已安装",
+    "install": "安装",
+    "installSkill": "安装技能",
+    "installedSkills": "已安装的技能",
+    "noSkills": "暂未安装任何技能",
+    "installFromUrl": "从链接安装技能",
+    "skillLink": "技能链接（skill.md）",
+    "dirName": "目录名",
+    "featuredSkills": "精选技能",
+    "mcpServers": "MCP 服务器",
+    "addServer": "添加服务器",
+    "noMcp": "暂未配置 MCP 服务器",
+    "memoryDesc": "AI 记忆会附加到每次对话的系统提示中，让智能体记住你的偏好和重要信息。",
+    "memoryPlaceholder": "输入要记住的事项，例如：我喜欢简洁的回答",
+    "noMemory": "暂无记忆事项",
+    "clearMemory": "清空所有记忆",
+    "theme": "界面主题",
+    "themeDesc": "切换亮色 / 暗色界面风格，设置会自动保存。",
+    "day": "白天",
+    "night": "夜晚",
+    "fxTitle": "AI 虚拟鼠标",
+    "fxDesc": "智能体操作浏览器时显示虚拟光标、点击涟漪、元素高亮和操作提示，直观展示 AI 的操作过程。",
+    "fxOn": "✓ 虚拟鼠标已开启",
+    "fxOff": "虚拟鼠标已关闭",
+    "fxHint": "AI 操作时会显示蓝色箭头光标 + 点击涟漪效果",
+    "fxHintOff": "操作动效不会显示在浏览器中",
+    "adBlock": "广告拦截",
+    "adBlockDesc": "自动屏蔽常见广告域名，提升浏览体验（需重新加载页面生效）。"
+  },
+  "readingMode": {
+    "title": "阅读模式"
+  }
+}

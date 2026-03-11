@@ -1,0 +1,103 @@
+{
+  "name": "urchin-electron",
+  "version": "0.1.0",
+  "description": "UrchinAI 浏览器 — Electron 版",
+  "main": "electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5174 && electron . --no-sandbox\"",
+    "build": "vite build",
+    "electron": "electron . --no-sandbox",
+    "start": "NODE_ENV=production electron . --no-sandbox",
+    "dist": "npm run build && electron-builder -mwl",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux deb"
+  },
+  "build": {
+    "appId": "com.urchinai.browser",
+    "productName": "UrchinAI 浏览器",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
+      "shortcutName": "UrchinAI 浏览器"
+    },
+    "linux": {
+      "target": [
+        "deb"
+      ],
+      "category": "Network",
+      "maintainer": "UrchinAI"
+    },
+    "deb": {
+      "packageCategory": "Network",
+      "depends": [
+        "python3",
+        "python3-pip"
+      ]
+    }
+  },
+  "keywords": [],
+  "author": "UrchinAI",
+  "license": "MIT",
+  "homepage": "https://github.com/urchinai/browser",
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.8",
+    "vite-plugin-electron": "^0.28.0",
+    "wait-on": "^8.0.0"
+  },
+  "dependencies": {
+    "@types/uuid": "^10.0.0",
+    "i18next": "^25.8.17",
+    "lucide-react": "^0.453.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^16.5.6",
+    "uuid": "^13.0.0"
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "common": {
+    "newTab": "New Tab",
+    "searchOrUrl": "Search or enter URL",
+    "addBookmark": "Add bookmark",
+    "removeBookmark": "Remove bookmark",
+    "readingMode": "Reading mode",
+    "aiSummarize": "AI summarize page",
+    "settings": "Settings",
+    "collapseChat": "Collapse chat",
+    "expandChat": "Expand chat",
+    "adBlockOn": "Ad blocking enabled",
+    "adBlockOff": "Ad blocking disabled",
+    "clear": "Clear",
+    "close": "Close",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "restore": "Restore"
+  },
+  "tabBar": {
+    "dragHint": "Drag to reorder / Drag out to new window"
+  },
+  "history": {
+    "title": "History",
+    "searchPlaceholder": "Search history...",
+    "empty": "No history yet",
+    "clearAll": "Clear history"
+  },
+  "bookmarks": {
+    "title": "Bookmarks",
+    "empty": "No bookmarks yet"
+  },
+  "sessions": {
+    "title": "Sessions",
+    "namePlaceholder": "Session name...",
+    "empty": "No saved sessions",
+    "tabsCount": "{{count}} tabs"
+  },
+  "chat": {
+    "title": "Urchin AI Chat",
+    "placeholder": "Message the agent… (Enter to send, Shift+Enter for newline)",
+    "hint": "Try: \"Open Baidu and search UrchinAI\"",
+    "empty": "Send a message to start chatting with the agent",
+    "emptyHint": "The agent can control the browser on the left",
+    "clearHistory": "Clear chat",
+    "status": {
+      "connecting": "Connecting",
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "error": "Error"
+    },
+    "toolArgs": "Args",
+    "toolResult": "Result"
+  },
+  "newTab": {
+    "searchPlaceholder": "Search or enter URL...",
+    "quickAccess": "Quick access",
+    "recent": "Recent",
+    "defaultLinks": "Frequently visited",
+    "addBookmarkHint": "Click the bookmark icon in the address bar to add bookmarks. They will appear here."
+  },
+  "settings": {
+    "title": "Settings",
+    "model": "Model & Providers",
+    "skills": "Skills",
+    "mcp": "MCP Servers",
+    "memory": "AI Memory",
+    "appearance": "Appearance",
+    "currentModel": "Current model",
+    "provider": "Provider",
+    "modelName": "Model name",
+    "customInput": "Custom input",
+    "fromPreset": "From preset",
+    "saveModel": "Save model config",
+    "saved": "Saved!",
+    "apiProviders": "API Providers",
+    "add": "Add",
+    "installed": "Installed",
+    "install": "Install",
+    "installSkill": "Install skill",
+    "installedSkills": "Installed skills",
+    "noSkills": "No skills installed yet",
+    "installFromUrl": "Install from URL",
+    "skillLink": "Skill URL (skill.md)",
+    "dirName": "Directory name",
+    "featuredSkills": "Featured skills",
+    "mcpServers": "MCP Servers",
+    "addServer": "Add server",
+    "noMcp": "No MCP servers configured",
+    "memoryDesc": "AI memory is appended to each conversation's system prompt, so the agent remembers your preferences.",
+    "memoryPlaceholder": "Enter what to remember, e.g.: I prefer concise answers",
+    "noMemory": "No memory items yet",
+    "clearMemory": "Clear all memory",
+    "theme": "Theme",
+    "themeDesc": "Switch between light and dark mode. Settings are saved automatically.",
+    "day": "Day",
+    "night": "Night",
+    "fxTitle": "AI virtual cursor",
+    "fxDesc": "Show virtual cursor, click ripple, and highlights when the agent operates the browser.",
+    "fxOn": "✓ Virtual cursor on",
+    "fxOff": "Virtual cursor off",
+    "fxHint": "Blue arrow cursor + click ripple during AI operations",
+    "fxHintOff": "Visual effects will not be shown",
+    "adBlock": "Ad blocking",
+    "adBlockDesc": "Block common ad domains. Reload page to apply."
+  },
+  "readingMode": {
+    "title": "Reading mode"
+  }
+}
