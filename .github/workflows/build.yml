@@ -87,8 +87,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/linux-deb/*
-            artifacts/windows-exe/*
+            artifacts/linux-deb/*.deb
+            artifacts/windows-exe/*.exe
           generate_release_notes: true
           draft: false
         env:
