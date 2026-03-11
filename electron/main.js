@@ -7,7 +7,7 @@ const fs     = require('fs')
 const os     = require('os')
 const { spawn, execSync } = require('child_process')
 
-const isDev        = process.env.NODE_ENV !== 'production'
+const isDev        = !app.isPackaged
 const RENDERER_URL = isDev ? 'http://localhost:5174' : null
 const BACKEND_PORT = 8001
 const BRIDGE_PORT  = 8002
@@ -824,14 +824,14 @@ function createWindow() {
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.commandLine.appendSwitch('no-sandbox')
-// Fix black screen issues on Windows
+// Fix black screen issues on Windows - disable hardware acceleration
+app.commandLine.appendSwitch('disable-gpu')
 app.commandLine.appendSwitch('disable-gpu-sandbox')
 app.commandLine.appendSwitch('disable-software-rasterizer')
 app.commandLine.appendSwitch('disable-gpu-compositing')
-// Use ANGLE backend for better compatibility
-if (process.platform === 'win32') {
-  app.commandLine.appendSwitch('use-angle', 'd3d9')
-}
+app.commandLine.appendSwitch('in-process-gpu')
+// Disable additional features that may cause issues
+app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor')
 
 // Intercept new-window requests from ALL webviews → open as new tab instead of popup
 app.on('web-contents-created', (_event, contents) => {
