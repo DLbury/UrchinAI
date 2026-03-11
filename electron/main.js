@@ -328,6 +328,13 @@ function startBackend() {
   const backendDir = app.isPackaged
     ? path.join(process.resourcesPath, 'backend')
     : path.join(__dirname, '..', 'backend')
+
+  // Check if backend directory exists
+  if (!fs.existsSync(backendDir)) {
+    console.error('[backend] Backend directory not found:', backendDir)
+    return
+  }
+
   const python = process.platform === 'win32' ? 'python' : 'python3'
   try {
     if (process.platform === 'win32') {
@@ -336,15 +343,21 @@ function startBackend() {
       execSync(`fuser -k ${BACKEND_PORT}/tcp 2>/dev/null || true`, { stdio: 'ignore' })
     }
   } catch (_) {}
-  // Hide console window on Windows
+
+  // Hide console window on Windows production build
   const spawnOpts = {
     cwd: backendDir,
     stdio: isDev ? 'inherit' : 'ignore',
     windowsHide: true,
+    detached: false,
   }
+
+  console.log('[backend] Starting Python backend from:', backendDir)
   backendProc = spawn(python,
     ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
     spawnOpts)
+
+  backendProc.on('error', (err) => console.error('[backend] Failed to start:', err))
   backendProc.on('exit', (c) => console.log('[backend] exit', c))
 }
 
@@ -824,14 +837,11 @@ function createWindow() {
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.commandLine.appendSwitch('no-sandbox')
-// Fix black screen issues on Windows - disable hardware acceleration
-app.commandLine.appendSwitch('disable-gpu')
-app.commandLine.appendSwitch('disable-gpu-sandbox')
-app.commandLine.appendSwitch('disable-software-rasterizer')
-app.commandLine.appendSwitch('disable-gpu-compositing')
-app.commandLine.appendSwitch('in-process-gpu')
-// Disable additional features that may cause issues
-app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor')
+// Fix black screen issues - only disable GPU on Windows
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-software-rasterizer')
+}
 
 // Intercept new-window requests from ALL webviews → open as new tab instead of popup
 app.on('web-contents-created', (_event, contents) => {
