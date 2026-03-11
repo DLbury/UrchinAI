@@ -16,7 +16,7 @@
   "build": {
     "appId": "com.urchinai.browser",
     "productName": "UrchinAI 浏览器",
-    "publish": "never",
+    "publish": [],
     "directories": {
       "output": "release"
     },
