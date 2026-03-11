@@ -1,5 +1,28 @@
 # UrchinAI 浏览器 — 打包说明
 
+## GitHub Actions 在线构建
+
+项目已配置 GitHub Actions，支持在线编译打包：
+
+### 触发方式
+
+1. **发布版本**：推送 `v*` 格式的 tag（如 `v0.1.0`）到 main 分支
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+   构建完成后会自动创建 GitHub Release，并附带 Linux `.deb` 和 Windows `.exe` 安装包。
+
+2. **手动构建**：在 GitHub 仓库页面 → Actions → Build and Release → Run workflow
+   构建产物可在该次运行的 Artifacts 中下载。
+
+### 构建平台
+
+- Linux：`.deb` 安装包
+- Windows：安装包 + 便携版 `.exe`
+
+---
+
 ## 前置要求
 
 - Node.js 18+

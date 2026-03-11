@@ -153,6 +153,15 @@ npm run build && npm start
 
 ## 打包发布
 
+### GitHub Actions 在线构建
+
+无需本地构建环境？使用 GitHub Actions：
+
+- **发布构建**：推送 `v0.1.0` 格式的 tag → 自动构建并创建 Release，附带 `.deb` 和 `.exe`
+- **手动构建**：Actions → Build and Release → Run workflow → 从 Artifacts 下载
+
+详见 [BUILD.md](BUILD.md)。
+
 ### 构建当前平台版本
 
 ```bash

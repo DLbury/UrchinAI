@@ -153,6 +153,15 @@ npm run build && npm start
 
 ## Build for Distribution
 
+### GitHub Actions (Online Build)
+
+No local build environment? Use GitHub Actions:
+
+- **Release build**: Push a tag like `v0.1.0` → automatic build and GitHub Release with `.deb` + `.exe`
+- **Manual build**: Actions → Build and Release → Run workflow → download from Artifacts
+
+See [BUILD.md](BUILD.md) for details.
+
 ### Build for Current Platform
 
 ```bash
