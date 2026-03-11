@@ -336,9 +336,15 @@ function startBackend() {
       execSync(`fuser -k ${BACKEND_PORT}/tcp 2>/dev/null || true`, { stdio: 'ignore' })
     }
   } catch (_) {}
+  // Hide console window on Windows
+  const spawnOpts = {
+    cwd: backendDir,
+    stdio: isDev ? 'inherit' : 'ignore',
+    windowsHide: true,
+  }
   backendProc = spawn(python,
     ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
-    { cwd: backendDir, stdio: 'inherit' })
+    spawnOpts)
   backendProc.on('exit', (c) => console.log('[backend] exit', c))
 }
 
@@ -818,6 +824,14 @@ function createWindow() {
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.commandLine.appendSwitch('no-sandbox')
+// Fix black screen issues on Windows
+app.commandLine.appendSwitch('disable-gpu-sandbox')
+app.commandLine.appendSwitch('disable-software-rasterizer')
+app.commandLine.appendSwitch('disable-gpu-compositing')
+// Use ANGLE backend for better compatibility
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('use-angle', 'd3d9')
+}
 
 // Intercept new-window requests from ALL webviews → open as new tab instead of popup
 app.on('web-contents-created', (_event, contents) => {
