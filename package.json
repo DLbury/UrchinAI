@@ -72,7 +72,23 @@
       ]
     }
   },
-  "keywords": [],
+  "keywords": [
+    "ai-browser",
+    "ai-agent",
+    "browser-automation",
+    "electron-browser",
+    "llm-browser",
+    "web-automation",
+    "natural-language-interface",
+    "openai",
+    "anthropic",
+    "deepseek",
+    "gemini",
+    "chatgpt",
+    "claude",
+    "browser-agent",
+    "desktop-browser"
+  ],
   "author": "UrchinAI",
   "license": "MIT",
   "homepage": "https://github.com/urchinai/browser",
