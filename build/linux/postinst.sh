@@ -4,7 +4,7 @@
 
 set -e
 
-SANDBOX="/opt/UrchinAI 浏览器/chrome-sandbox"
+SANDBOX="/opt/UrchinAI Browser/chrome-sandbox"
 
 if [ -f "$SANDBOX" ]; then
     chown root:root "$SANDBOX" 2>/dev/null || true
