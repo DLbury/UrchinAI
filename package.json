@@ -1,6 +1,6 @@
 {
   "name": "urchin-electron",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "UrchinAI 浏览器 — Electron 版",
   "main": "electron/main.js",
   "type": "module",
@@ -49,7 +49,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -58,7 +59,7 @@
         "zh_CN",
         "en_US"
       ],
-      "shortcutName": "UrchinAI 浏览器"
+      "shortcutName": "UrchinAI"
     },
     "linux": {
       "target": [
@@ -67,9 +68,10 @@
       "category": "Network",
       "maintainer": "UrchinAI",
       "executableName": "urchinai-browser",
+      "icon": "build/icon.png",
       "desktop": {
-        "Name": "UrchinAI 浏览器",
-        "Comment": "AI 驱动的智能桌面浏览器",
+        "Name": "UrchinAI",
+        "Comment": "AI-powered smart desktop browser",
         "Categories": "Network;WebBrowser;"
       }
     },
