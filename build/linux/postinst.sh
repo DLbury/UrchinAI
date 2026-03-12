@@ -1,10 +1,10 @@
 #!/bin/bash
-# Post-installation script for UrchinAI Browser
+# Post-installation script for UrchinAI
 # Fix chrome-sandbox permissions for Electron
 
 set -e
 
-SANDBOX="/opt/UrchinAI Browser/chrome-sandbox"
+SANDBOX="/opt/UrchinAI/chrome-sandbox"
 
 if [ -f "$SANDBOX" ]; then
     chown root:root "$SANDBOX" 2>/dev/null || true
