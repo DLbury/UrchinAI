@@ -29,9 +29,11 @@ export function useWebSocket(sessionId: string) {
 
     if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const host = window.location.host
-    const ws = new WebSocket(`${protocol}://${host}/ws/${sessionId}`)
+    // In Electron production (file://), use fixed backend address
+    // In development, use window.location.host (for dev server proxy)
+    const isDev = window.location.hostname === 'localhost' && window.location.port === '5174'
+    const host = isDev ? window.location.host : '127.0.0.1:8001'
+    const ws = new WebSocket(`ws://${host}/ws/${sessionId}`)
     wsRef.current = ws
     setStatus('connecting')
 
