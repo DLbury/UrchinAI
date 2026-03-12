@@ -3,7 +3,7 @@
  * Used for read-only page operations that don't need the Python backend.
  */
 
-const BRIDGE = 'http://localhost:8002'
+const BRIDGE = 'http://127.0.0.1:8002'
 
 async function bridgeGet<T>(path: string): Promise<T> {
   const res = await fetch(`${BRIDGE}${path}`)

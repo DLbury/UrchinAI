@@ -1,4 +1,8 @@
-const BASE = ''  // proxied via vite in dev, same origin in production
+// In Electron production (file://), use fixed backend address
+// In development, use relative path (proxied via vite dev server)
+const BASE = window.location.hostname === 'localhost' && window.location.port === '5174'
+  ? ''
+  : 'http://127.0.0.1:8001'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
