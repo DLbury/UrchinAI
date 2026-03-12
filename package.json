@@ -1,6 +1,6 @@
 {
   "name": "urchin-electron",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "UrchinAI 浏览器 — Electron 版",
   "main": "electron/main.js",
   "type": "module",
@@ -66,7 +66,12 @@
       ],
       "category": "Network",
       "maintainer": "UrchinAI",
-      "executableName": "urchinai-browser"
+      "executableName": "urchinai-browser",
+      "desktop": {
+        "Name": "UrchinAI 浏览器",
+        "Comment": "AI 驱动的智能桌面浏览器",
+        "Categories": "Network;WebBrowser;"
+      }
     },
     "deb": {
       "packageCategory": "Network",
@@ -80,7 +85,8 @@
         "libatspi2.0-0",
         "libuuid1",
         "libasound2t64"
-      ]
+      ],
+      "afterInstall": "build/linux/postinst.sh"
     }
   },
   "keywords": [
