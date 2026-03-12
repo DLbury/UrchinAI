@@ -329,14 +329,30 @@ function startBackend() {
     ? path.join(process.resourcesPath, 'backend')
     : path.join(__dirname, '..', 'backend')
 
+  console.log('[backend] Checking for bundled backend...')
+  console.log('[backend] resourcesPath:', process.resourcesPath)
+  console.log('[backend] backendDir:', backendDir)
+
   const bundledBackend = app.isPackaged && (() => {
     const base = path.join(process.resourcesPath, 'backend')
+    console.log('[backend] Looking in:', base)
+
+    // List files in backend directory
+    try {
+      const files = fs.readdirSync(base)
+      console.log('[backend] Files found:', files)
+    } catch (e) {
+      console.log('[backend] Cannot read directory:', e.message)
+    }
+
     if (process.platform === 'win32') {
       const exe = path.join(base, 'urchinai-backend.exe')
+      console.log('[backend] Checking for Windows exe:', exe, 'exists:', fs.existsSync(exe))
       return fs.existsSync(exe) ? exe : null
     }
     if (process.platform === 'linux') {
       const bin = path.join(base, 'urchinai-backend')
+      console.log('[backend] Checking for Linux binary:', bin, 'exists:', fs.existsSync(bin))
       return fs.existsSync(bin) ? bin : null
     }
     return null
@@ -363,6 +379,8 @@ function startBackend() {
   }
 
   // Dev or Linux / Windows without bundled exe: run via system Python
+  console.log('[backend] No bundled backend found, trying system Python...')
+
   if (!fs.existsSync(backendDir)) {
     console.error('[backend] Backend directory not found:', backendDir)
     return
@@ -894,10 +912,27 @@ function createWindow() {
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.commandLine.appendSwitch('no-sandbox')
-// Fix black screen issues - only disable GPU on Windows
+
+// Crash handling
+process.on('uncaughtException', (err) => {
+  console.error('[main] Uncaught Exception:', err)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[main] Unhandled Rejection:', reason)
+})
+
+// Fix black screen / crash issues
 if (process.platform === 'win32') {
   app.commandLine.appendSwitch('disable-gpu')
   app.commandLine.appendSwitch('disable-software-rasterizer')
+}
+
+// Linux crash fix - use software rendering
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-software-rasterizer')
+  app.commandLine.appendSwitch('disable-in-process-stack-traces')
 }
 
 // Intercept new-window requests from ALL webviews → open as new tab instead of popup

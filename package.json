@@ -1,6 +1,6 @@
 {
   "name": "urchin-electron",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "UrchinAI 浏览器 — Electron 版",
   "main": "electron/main.js",
   "type": "module",
@@ -28,13 +28,11 @@
     "extraResources": [
       {
         "from": "backend/urchinai-backend.exe",
-        "to": "backend/urchinai-backend.exe",
-        "filter": ["**/*"]
+        "to": "backend"
       },
       {
         "from": "backend/urchinai-backend",
-        "to": "backend/urchinai-backend",
-        "filter": ["**/*"]
+        "to": "backend"
       }
     ],
     "win": {
