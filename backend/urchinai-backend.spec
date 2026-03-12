@@ -18,7 +18,6 @@ hidden_imports = [
     'uvicorn.protocols.websockets.auto',
     'uvicorn.lifespan',
     'uvicorn.lifespan.on',
-    'uvicorn.protocols.websockets.auto',
     'httptools',
     'watchfiles',
     'pydantic',
@@ -45,6 +44,35 @@ hidden_imports = [
     'nanobot_ai',
 ]
 
+# Exclude heavy ML libraries that are not needed for browser automation
+excludes = [
+    'tkinter',
+    'torch',
+    'torchvision',
+    'torchaudio',
+    'tensorflow',
+    'keras',
+    'jax',
+    'flax',
+    'numpy.f2py',
+    'scipy',
+    'pandas',
+    'matplotlib',
+    'PIL',
+    'cv2',
+    'sklearn',
+    'transformers',
+    'diffusers',
+    'accelerate',
+    'safetensors',
+    'huggingface_hub',
+    'tokenizers',
+    'sentencepiece',
+    'tqdm',
+    'gradio',
+    'langflow',
+]
+
 a = Analysis(
     ['main.py'],
     pathex=[],
@@ -54,7 +82,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter'],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
