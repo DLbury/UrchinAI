@@ -13,4 +13,5 @@ if (process.platform !== 'linux') {
 
 const backendDir = path.join(__dirname, '..', 'backend');
 const script = path.join(backendDir, 'build_exe.py');
-execSync(`python3 "${script}"`, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
+// Use 'python' which works with actions/setup-python on CI
+execSync(`python "${script}"`, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
