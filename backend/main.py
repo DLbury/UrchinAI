@@ -93,3 +93,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# Entry point for PyInstaller / bundled executable
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8001)

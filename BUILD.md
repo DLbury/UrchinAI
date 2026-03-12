@@ -23,35 +23,42 @@
 
 ---
 
-## 前置要求
+## 前置要求（仅构建时需要）
 
 - Node.js 18+
-- Python 3.8+（运行 AI 后端）
-- 目标系统需安装：`pip install -r backend/requirements.txt`
+- Python 3.8+ 与 `pip install -r backend/requirements.txt`、`pip install pyinstaller`（用于打包后端；**最终用户无需安装 Python**）
 
 ## 打包命令
 
-### Linux 下打包 deb
+### Linux 下打包 deb（含内置后端）
+
+在 **Linux** 上执行（会先打包后端为单二进制，再打包 Electron）：
 
 ```bash
 npm run dist:linux
 ```
 
+流程：`npm run build` → `build:backend:linux`（PyInstaller 生成 `backend/urchinai-backend`）→ electron-builder 打包。安装后用户无需安装 Python，主程序启动时后端自动启动。
+
 产物：`release/urchin-electron_0.1.0_amd64.deb`
 
 安装：`sudo dpkg -i release/urchin-electron_0.1.0_amd64.deb`
 
-### Windows 下打包 exe
+### Windows 下打包 exe（含内置 Python 后端）
 
-在 Windows 上执行：
+在 **Windows** 上执行（会先打包后端为单 exe，再打包 Electron，无需用户本机安装 Python）：
 
 ```bash
 npm run dist:win
 ```
 
+流程：`npm run build` → `build:backend:win`（PyInstaller 生成 `backend/urchinai-backend.exe`）→ electron-builder 打包。
+
 产物：
 - `release/UrchinAI 浏览器 Setup 0.1.0.exe`（安装包）
 - `release/UrchinAI 浏览器 0.1.0.exe`（便携版）
+
+**依赖**：本机需安装 Python 3.8+ 和 `pip install -r backend/requirements.txt` 以及 `pip install pyinstaller`，仅用于**构建**；最终用户无需安装 Python。
 
 ### Linux 下交叉打包 Windows exe
 
@@ -72,21 +79,15 @@ npm run dist
 ```
 
 - 在 Linux 上：生成 deb
-- 在 Windows 上：生成 exe
+- 在 Windows 上：生成 exe  
+
+需**内置后端**时请使用 `npm run dist:linux` 或 `npm run dist:win`。
 
 ## 首次运行
 
-打包后的应用会依赖系统 Python 环境。首次使用前请安装后端依赖：
+**安装包/便携版（exe 或 deb）**：所有依赖已打包，后端随主程序自动启动，**用户无需安装 Python 或任何额外依赖**。
 
-```bash
-# Linux（deb 安装后）
-cd /opt/UrchinAI\ 浏览器/resources/backend
-pip3 install -r requirements.txt
-
-# 或从源码目录
-cd backend
-pip install -r requirements.txt
-```
+**从源码运行**（`npm run dev` / `npm start`）：需本机安装 Python 3.8+，并在 `backend` 目录执行 `pip install -r requirements.txt`。
 
 ## 产物目录
 

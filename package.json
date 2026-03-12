@@ -10,8 +10,10 @@
     "electron": "electron . --no-sandbox",
     "start": "NODE_ENV=production electron . --no-sandbox",
     "dist": "npm run build && electron-builder -mwl --publish never",
-    "dist:win": "npm run build && electron-builder --win --publish never",
-    "dist:linux": "npm run build && electron-builder --linux deb --publish never"
+    "build:backend:win": "node scripts/build-backend-win.js",
+    "build:backend:linux": "node scripts/build-backend-linux.js",
+    "dist:win": "npm run build && npm run build:backend:win && electron-builder --win --publish never",
+    "dist:linux": "npm run build && npm run build:backend:linux && electron-builder --linux deb --publish never"
   },
   "build": {
     "appId": "com.urchinai.browser",
@@ -62,13 +64,21 @@
         "deb"
       ],
       "category": "Network",
-      "maintainer": "UrchinAI"
+      "maintainer": "UrchinAI",
+      "executableName": "urchinai-browser"
     },
     "deb": {
       "packageCategory": "Network",
       "depends": [
-        "python3",
-        "python3-pip"
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libasound2t64"
       ]
     }
   },

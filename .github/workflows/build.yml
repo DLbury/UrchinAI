@@ -44,6 +44,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Setup Python (for bundled backend)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend deps + PyInstaller
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pyinstaller
+
       - name: Build (Linux)
         if: matrix.platform == 'linux'
         run: |

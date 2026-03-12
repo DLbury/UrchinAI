@@ -36,6 +36,12 @@ venv/
 *.egg-info/
 .eggs/
 
+# Backend PyInstaller build (bundled backend binary)
+backend/dist/
+backend/build/
+backend/urchinai-backend
+backend/urchinai-backend.exe
+
 # User data (local dev)
 .nanobot/
 

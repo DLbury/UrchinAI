@@ -329,13 +329,45 @@ function startBackend() {
     ? path.join(process.resourcesPath, 'backend')
     : path.join(__dirname, '..', 'backend')
 
-  // Check if backend directory exists
+  const bundledBackend = app.isPackaged && (() => {
+    const base = path.join(process.resourcesPath, 'backend')
+    if (process.platform === 'win32') {
+      const exe = path.join(base, 'urchinai-backend.exe')
+      return fs.existsSync(exe) ? exe : null
+    }
+    if (process.platform === 'linux') {
+      const bin = path.join(base, 'urchinai-backend')
+      return fs.existsSync(bin) ? bin : null
+    }
+    return null
+  })()
+
+  if (bundledBackend) {
+    try {
+      if (process.platform === 'win32') {
+        execSync(`for /f "tokens=5" %a in ('netstat -aon ^| find ":${BACKEND_PORT}"') do taskkill /f /pid %a`, { stdio: 'ignore' })
+      } else {
+        execSync(`fuser -k ${BACKEND_PORT}/tcp 2>/dev/null || true`, { stdio: 'ignore' })
+      }
+    } catch (_) {}
+    console.log('[backend] Starting bundled backend:', bundledBackend)
+    backendProc = spawn(bundledBackend, [], {
+      cwd: path.dirname(bundledBackend),
+      stdio: isDev ? 'inherit' : 'ignore',
+      windowsHide: true,
+      detached: false,
+    })
+    backendProc.on('error', (err) => console.error('[backend] Failed to start:', err.message))
+    backendProc.on('exit', (c) => { if (c != null && c !== 0) console.log('[backend] exit code', c) })
+    return
+  }
+
+  // Dev or Linux / Windows without bundled exe: run via system Python
   if (!fs.existsSync(backendDir)) {
     console.error('[backend] Backend directory not found:', backendDir)
     return
   }
 
-  const python = process.platform === 'win32' ? 'python' : 'python3'
   try {
     if (process.platform === 'win32') {
       execSync(`for /f "tokens=5" %a in ('netstat -aon ^| find ":${BACKEND_PORT}"') do taskkill /f /pid %a`, { stdio: 'ignore' })
@@ -344,7 +376,6 @@ function startBackend() {
     }
   } catch (_) {}
 
-  // Hide console window on Windows production build
   const spawnOpts = {
     cwd: backendDir,
     stdio: isDev ? 'inherit' : 'ignore',
@@ -352,13 +383,39 @@ function startBackend() {
     detached: false,
   }
 
-  console.log('[backend] Starting Python backend from:', backendDir)
-  backendProc = spawn(python,
-    ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
-    spawnOpts)
+  function tryStartWindows() {
+    const port = String(BACKEND_PORT)
+    const tryCmd = (shellCmd) => {
+      const proc = spawn('cmd', ['/c', shellCmd], { ...spawnOpts, windowsHide: true })
+      proc.on('error', (err) => console.error('[backend] Failed to start:', err.message))
+      proc.on('exit', (c) => { if (c !== 0 && c != null) console.log('[backend] exit code', c) })
+      return proc
+    }
+    const cmd1 = `py -3 -m uvicorn main:app --host 127.0.0.1 --port ${port}`
+    backendProc = tryCmd(cmd1)
+    let fallbackDone = false
+    backendProc.on('exit', (c) => {
+      if (fallbackDone) return
+      if ((c === 1 || c === 9009) && backendProc) {
+        fallbackDone = true
+        const cmd2 = `python -m uvicorn main:app --host 127.0.0.1 --port ${port}`
+        console.log('[backend] Retry with python:', cmd2)
+        backendProc = tryCmd(cmd2)
+      }
+    })
+  }
 
-  backendProc.on('error', (err) => console.error('[backend] Failed to start:', err))
-  backendProc.on('exit', (c) => console.log('[backend] exit', c))
+  if (process.platform === 'win32') {
+    console.log('[backend] Starting Python backend from:', backendDir)
+    tryStartWindows()
+  } else {
+    console.log('[backend] Starting Python backend from:', backendDir)
+    backendProc = spawn('python3',
+      ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
+      spawnOpts)
+    backendProc.on('error', (err) => console.error('[backend] Failed to start:', err))
+    backendProc.on('exit', (c) => console.log('[backend] exit', c))
+  }
 }
 
 function stopBackend() {
