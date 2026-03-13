@@ -1,13 +1,23 @@
 'use strict'
 
-const { app, BrowserWindow, ipcMain, shell, session: electronSession, webContents, Menu, clipboard } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, session: electronSession, webContents, Menu, clipboard, protocol, net } = require('electron')
 const path   = require('path')
 const http   = require('http')
 const fs     = require('fs')
 const os     = require('os')
+const { pathToFileURL } = require('url')
 const { spawn, execSync } = require('child_process')
 
 const isDev        = !app.isPackaged
+
+// Register app:// protocol for packaged mode (fixes blank window on Linux - file:// blocks ES modules)
+// secure: false so ws://127.0.0.1 is not blocked as mixed content when connecting to agent
+if (!isDev) {
+  protocol.registerSchemesAsPrivileged([{
+    scheme: 'app',
+    privileges: { standard: true, secure: false, supportFetchAPI: true },
+  }])
+}
 const RENDERER_URL = isDev ? 'http://localhost:5174' : null
 const BACKEND_PORT = 8001
 const BRIDGE_PORT  = 8002
@@ -838,7 +848,7 @@ function registerIpc() {
     const win = new BrowserWindow({
       width: 1300, height: 860, minWidth: 900, minHeight: 600,
       x: Math.max(0, (sx || 100) - 30), y: Math.max(0, (sy || 100) - 15),
-      title: 'UrchinAI 浏览器',
+      title: 'UrchinAI',
       titleBarStyle: 'hiddenInset',
       backgroundColor: bgColor,
       webPreferences: {
@@ -847,6 +857,7 @@ function registerIpc() {
         nodeIntegration: false,
         webviewTag: true,
         partition: NANOBOT_PARTITION,  // share session so localStorage is synced
+        ...(isDev ? {} : { webSecurity: false }),
       },
     })
     const encoded = encodeURIComponent(url || '')
@@ -854,7 +865,7 @@ function registerIpc() {
     if (RENDERER_URL) {
       win.loadURL(`${RENDERER_URL}?${query}`)
     } else {
-      win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query: { initialUrl: url || '', theme: t } })
+      win.loadURL(`app://./dist/index.html?initialUrl=${encodeURIComponent(url || '')}&theme=${t}`)
     }
     return true
   })
@@ -887,7 +898,7 @@ function registerIpc() {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 900, minHeight: 600,
-    title: 'UrchinAI 浏览器',
+    title: 'UrchinAI',
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#111827',
     webPreferences: {
@@ -896,6 +907,7 @@ function createWindow() {
       nodeIntegration: false,
       webviewTag: true,
       partition: NANOBOT_PARTITION,  // shared session for ad blocking
+      ...(isDev ? {} : { webSecurity: false }),  // allow ws://127.0.0.1 from app:// when packaged
     },
   })
 
@@ -903,7 +915,7 @@ function createWindow() {
     mainWindow.loadURL(RENDERER_URL)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+    mainWindow.loadURL('app://./dist/index.html')
   }
 
   mainWindow.on('closed', () => { mainWindow = null })
@@ -933,6 +945,10 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('disable-gpu')
   app.commandLine.appendSwitch('disable-software-rasterizer')
   app.commandLine.appendSwitch('disable-in-process-stack-traces')
+  // Fix /dev/shm permission issues
+  app.commandLine.appendSwitch('disable-dev-shm-usage')
+  app.commandLine.appendSwitch('no-zygote')
+  app.commandLine.appendSwitch('disable-setuid-sandbox')
 }
 
 // Intercept new-window requests from ALL webviews → open as new tab instead of popup
@@ -967,6 +983,21 @@ function waitForBackend(maxWaitMs = 30000) {
 const NANOBOT_PARTITION = 'persist:urchin'
 
 app.whenReady().then(async () => {
+  // Register app:// protocol for packaged mode (serves dist/ from app root)
+  // Must register on NANOBOT_PARTITION session since main window uses that partition
+  if (!isDev) {
+    const appRoot = path.join(__dirname, '..')
+    const handler = (request) => {
+      const pathname = new URL(request.url).pathname.replace(/^\//, '')
+      const filePath = path.resolve(appRoot, pathname)
+      const relative = path.relative(appRoot, filePath)
+      if (relative.startsWith('..')) return new Response('Forbidden', { status: 403 })
+      return net.fetch(pathToFileURL(filePath).toString())
+    }
+    protocol.handle('app', handler)
+    electronSession.fromPartition(NANOBOT_PARTITION).protocol.handle('app', handler)
+  }
+
   Menu.setApplicationMenu(null)  // 去掉菜单栏
   loadAppSettings()
   // Apply ad blocking to both the default session and our named partition
@@ -978,10 +1009,19 @@ app.whenReady().then(async () => {
   // Show the window immediately so the user sees the loading screen,
   // but wait until the backend is healthy before the renderer is told it's ready.
   createWindow()
+  let backendReady = false
+  let pageLoaded = false
+  const maybeSendBackendReady = () => {
+    if (backendReady && pageLoaded) mainWindow?.webContents?.send('backend:ready')
+  }
+  mainWindow?.webContents?.on('did-finish-load', () => {
+    pageLoaded = true
+    maybeSendBackendReady()
+  })
   const ok = await waitForBackend()
+  backendReady = true
   console.log(`[main] backend ready: ${ok}`)
-  // Notify renderer so it can retry WS / API calls right away
-  mainWindow?.webContents?.send('backend:ready')
+  maybeSendBackendReady()
 })
 
 app.on('window-all-closed', () => { stopBackend(); if (process.platform !== 'darwin') app.quit() })

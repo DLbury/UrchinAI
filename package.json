@@ -1,7 +1,7 @@
 {
   "name": "urchin-electron",
-  "version": "0.2.2",
-  "description": "UrchinAI 浏览器 — Electron 版",
+  "version": "0.2.3",
+  "description": "UrchinAI — Electron",
   "main": "electron/main.js",
   "type": "module",
   "scripts": {
