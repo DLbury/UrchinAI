@@ -1,5 +1,5 @@
 """
-UrchinAI 浏览器后端 — FastAPI
+UrchinAI backend — FastAPI
 
 Endpoints:
   WS   /ws/{session_id}     — chat + agent streaming
@@ -54,10 +54,22 @@ app.include_router(scripts_router)
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    await websocket.accept()
+    try:
+        await websocket.accept()
+        logger.info("WebSocket connected: %s", session_id)
+    except Exception as e:
+        logger.error("Failed to accept WebSocket: %s", e)
+        return
 
-    from agent.manager import get_or_create_manager
-    manager = get_or_create_manager(session_id)
+    try:
+        from agent.manager import get_or_create_manager
+        manager = get_or_create_manager(session_id)
+        logger.info("Manager created for session: %s", session_id)
+    except Exception as e:
+        logger.error("Failed to create manager for session %s: %s", session_id, e)
+        await websocket.send_text(json.dumps({"type": "error", "message": f"Failed to initialize agent: {str(e)}"}))
+        await websocket.close()
+        return
 
     try:
         while True:

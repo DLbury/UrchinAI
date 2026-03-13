@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for UrchinAI Browser backend (one-file binary: .exe on Windows, no ext on Linux).
+# PyInstaller spec for UrchinAI backend (one-file binary: .exe on Windows, no ext on Linux).
 # Run from backend dir: pyinstaller urchinai-backend.spec
 
 import sys
@@ -42,6 +42,10 @@ hidden_imports = [
     'tiktoken',
     'tiktoken_ext',
     'nanobot_ai',
+    # Agent module
+    'agent',
+    'agent.manager',
+    'agent.browser_tool',
 ]
 
 # Exclude heavy ML libraries that are not needed for browser automation
