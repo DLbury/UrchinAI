@@ -460,6 +460,7 @@ function getActiveWc() {
 function startBridgeServer() {
   const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json')
+    res.setHeader('Access-Control-Allow-Origin', '*')
 
     // Tab-management endpoints don't need an active wc
     const noWcNeeded = ['/tabs', '/new-tab', '/close-tab', '/switch-tab']
@@ -891,6 +892,29 @@ function registerIpc() {
   })
 
   ipcMain.handle('shell:openExternal', (_e, url) => shell.openExternal(url))
+
+  // API proxy: renderer → main → backend (bypasses CORS from app:// origin)
+  ipcMain.handle('api:request', async (_e, { method, path, body }) => {
+    const url = `http://127.0.0.1:${BACKEND_PORT}${path}`
+    console.log('[api:proxy]', method, path)
+    try {
+      const opts = {
+        method: method || 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }
+      if (body && (method === 'POST' || method === 'PUT')) opts.body = body
+      const res = await net.fetch(url, opts)
+      const text = await res.text()
+      if (!res.ok) {
+        console.error('[api:proxy] FAIL', path, res.status, text.slice(0, 200))
+        throw new Error(`${res.status} ${res.statusText}: ${text}`)
+      }
+      return text ? JSON.parse(text) : null
+    } catch (err) {
+      console.error('[api:proxy] ERROR', path, err.message)
+      throw err
+    }
+  })
 }
 
 // ─── Window ───────────────────────────────────────────────────────────────────
@@ -919,6 +943,15 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => { mainWindow = null })
+
+  // Ctrl+Shift+I to open DevTools in production (for debugging API/WS issues)
+  if (!isDev) {
+    mainWindow.webContents.on('before-input-event', (_, input) => {
+      if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+        mainWindow.webContents.toggleDevTools()
+      }
+    })
+  }
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
@@ -1006,12 +1039,19 @@ app.whenReady().then(async () => {
 
   // Configure CORS and network settings for the session
   const configureSession = (sess) => {
-    // Allow all CORS requests
+    // Allow all CORS requests and WebSocket connections
     sess.webRequest.onHeadersReceived((details, callback) => {
       callback({
         responseHeaders: {
           ...details.responseHeaders,
-          'Content-Security-Policy': ["default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:"]
+          'Content-Security-Policy': [
+            "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
+            "connect-src * ws: wss: http: https:;",
+            "script-src * 'unsafe-inline' 'unsafe-eval' blob:;",
+            "style-src * 'unsafe-inline' blob:;",
+            "img-src * data: blob: https: http:;",
+            "font-src * data: blob:;"
+          ].join(' ')
         }
       })
     })
