@@ -3,6 +3,15 @@
 # Run from backend dir: pyinstaller urchinai-backend.spec
 
 import sys
+import site
+
+site_packages = site.getsitepackages()[0]
+# Try conda site-packages if default doesn't work
+try:
+    import litellm
+    litellm_path = litellm.__path__[0]
+except ImportError:
+    litellm_path = None
 
 block_cipher = None
 
@@ -48,6 +57,15 @@ hidden_imports = [
     'agent.browser_tool',
 ]
 
+# Data files needed by litellm
+datas = []
+if litellm_path:
+    import glob
+    json_files = glob.glob(f'{litellm_path}/*.json')
+    for f in json_files:
+        datas.append((f, 'litellm'))
+    print(f'[PyInstaller] Adding {len(datas)} litellm data files from {litellm_path}')
+
 # Exclude heavy ML libraries that are not needed for browser automation
 excludes = [
     'tkinter',
@@ -81,7 +99,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
