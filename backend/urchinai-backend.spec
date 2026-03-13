@@ -4,6 +4,7 @@
 
 import sys
 import site
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 site_packages = site.getsitepackages()[0]
 # Try conda site-packages if default doesn't work
@@ -44,18 +45,28 @@ hidden_imports = [
     'httpcore',
     'h11',
     'websockets',
-    'litellm',
-    'litellm.llms',
-    'litellm.adapters',
-    'openai',
-    'tiktoken',
-    'tiktoken_ext',
     'nanobot_ai',
     # Agent module
     'agent',
     'agent.manager',
     'agent.browser_tool',
 ]
+
+# Automatically collect all litellm submodules
+try:
+    litellm_hidden = collect_submodules('litellm')
+    hidden_imports.extend(litellm_hidden)
+    print(f'[PyInstaller] Added {len(litellm_hidden)} litellm submodules')
+except Exception as e:
+    print(f'[PyInstaller] Warning: Could not collect litellm submodules: {e}')
+
+# Also collect openai submodules
+try:
+    openai_hidden = collect_submodules('openai')
+    hidden_imports.extend(openai_hidden)
+    print(f'[PyInstaller] Added {len(openai_hidden)} openai submodules')
+except Exception as e:
+    print(f'[PyInstaller] Warning: Could not collect openai submodules: {e}')
 
 # Data files needed by litellm
 datas = []
@@ -65,6 +76,14 @@ if litellm_path:
     for f in json_files:
         datas.append((f, 'litellm'))
     print(f'[PyInstaller] Adding {len(datas)} litellm data files from {litellm_path}')
+
+# Also collect litellm data files using PyInstaller hook
+try:
+    litellm_datas = collect_data_files('litellm')
+    datas.extend(litellm_datas)
+    print(f'[PyInstaller] Added {len(litellm_datas)} litellm data files via hook')
+except Exception as e:
+    print(f'[PyInstaller] Warning: Could not collect litellm data files: {e}')
 
 # Exclude heavy ML libraries that are not needed for browser automation
 excludes = [
