@@ -1,6 +1,6 @@
 {
   "name": "urchin-electron",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "UrchinAI — Electron",
   "main": "electron/main.js",
   "type": "module",
@@ -37,6 +37,11 @@
         "from": "backend/urchinai-backend",
         "to": "backend/urchinai-backend"
       }
+    ],
+    "asarUnpack": [
+      "node_modules/ws/**/*",
+      "node_modules/bufferutil/**/*",
+      "node_modules/utf-8-validate/**/*"
     ],
     "win": {
       "target": [

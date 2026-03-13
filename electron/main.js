@@ -758,6 +758,118 @@ function startBridgeServer() {
   server.listen(BRIDGE_PORT, '127.0.0.1', () => console.log(`[bridge] :${BRIDGE_PORT}`))
 }
 
+// ─── WebSocket proxy (for packaged app:// origin) ──────────────────────────────
+
+// Try to load ws module, fall back to null if not available
+let WebSocket = null
+try {
+  WebSocket = require('ws')
+  console.log('[ws:proxy] ws module loaded successfully')
+} catch (e) {
+  console.error('[ws:proxy] Failed to load ws module:', e)
+}
+
+const wsConnections = new Map() // sessionId -> { ws, listeners: Set<webContentsId> }
+const wsRetryTimers = new Map() // sessionId -> { count, timer }
+
+function connectWebSocket(sessionId) {
+  if (!WebSocket) {
+    console.error('[ws:proxy] WebSocket module not available')
+    mainWindow?.webContents?.send('ws:status', { sessionId, status: 'error', error: 'WebSocket module not loaded' })
+    return
+  }
+
+  // 如果已有连接且是 OPEN/CONNECTING 状态，跳过
+  const existing = wsConnections.get(sessionId)
+  if (existing && (existing.ws.readyState === 0 || existing.ws.readyState === 1)) {
+    console.log('[ws:proxy] Already connected or connecting:', sessionId)
+    return
+  }
+
+  // 清除旧连接记录
+  wsConnections.delete(sessionId)
+
+  const wsUrl = `ws://127.0.0.1:${BACKEND_PORT}/ws/${sessionId}`
+  const retryInfo = wsRetryTimers.get(sessionId)
+  const attempt = retryInfo ? retryInfo.count + 1 : 1
+  console.log('[ws:proxy] Connecting to:', wsUrl, `(attempt ${attempt})`)
+
+  try {
+    const ws = new WebSocket(wsUrl)
+    const conn = { ws, listeners: new Set() }
+    wsConnections.set(sessionId, conn)
+
+    ws.on('open', () => {
+      console.log('[ws:proxy] Connected:', sessionId)
+      wsRetryTimers.delete(sessionId) // 重置重试计数
+      mainWindow?.webContents?.send('ws:status', { sessionId, status: 'connected' })
+    })
+
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString())
+        mainWindow?.webContents?.send('ws:message', { sessionId, data: msg })
+      } catch (e) {
+        console.error('[ws:proxy] Failed to parse message:', e)
+      }
+    })
+
+    ws.on('close', (code, reason) => {
+      console.log('[ws:proxy] Closed:', sessionId, code, reason.toString())
+      wsConnections.delete(sessionId)
+      mainWindow?.webContents?.send('ws:status', { sessionId, status: 'disconnected', code, reason: reason.toString() })
+
+      // 1006 = 异常断开，自动重连（指数退避，最多 10 次）
+      if (code === 1006) {
+        const nextAttempt = attempt + 1
+        if (nextAttempt <= 10) {
+          const delay = Math.min(500 * Math.pow(1.5, attempt), 15000) // 指数退避，最多15s
+          console.log(`[ws:proxy] Retry ${nextAttempt}/10 in ${Math.round(delay)}ms:`, sessionId)
+          const timer = setTimeout(() => {
+            wsRetryTimers.delete(sessionId)
+            connectWebSocket(sessionId)
+          }, delay)
+          wsRetryTimers.set(sessionId, { count: nextAttempt, timer })
+        } else {
+          console.error('[ws:proxy] Max retries reached:', sessionId)
+          wsRetryTimers.delete(sessionId)
+        }
+      }
+    })
+
+    ws.on('error', (err) => {
+      console.error('[ws:proxy] Error:', sessionId, err.message)
+      // error 事件后 close 事件也会触发，重连逻辑在 close 里处理
+    })
+  } catch (err) {
+    console.error('[ws:proxy] Failed to create WebSocket:', err)
+    mainWindow?.webContents?.send('ws:status', { sessionId, status: 'error', error: String(err) })
+  }
+}
+
+function disconnectWebSocket(sessionId) {
+  // 停止自动重连
+  const retryInfo = wsRetryTimers.get(sessionId)
+  if (retryInfo) {
+    clearTimeout(retryInfo.timer)
+    wsRetryTimers.delete(sessionId)
+  }
+  const conn = wsConnections.get(sessionId)
+  if (conn) {
+    conn.ws.close()
+    wsConnections.delete(sessionId)
+  }
+}
+
+function sendWebSocketMessage(sessionId, data) {
+  const conn = wsConnections.get(sessionId)
+  if (conn && conn.ws.readyState === WebSocket.OPEN) {
+    conn.ws.send(JSON.stringify(data))
+    return true
+  }
+  return false
+}
+
 // ─── IPC ─────────────────────────────────────────────────────────────────────
 
 function registerIpc() {
@@ -915,6 +1027,26 @@ function registerIpc() {
       throw err
     }
   })
+
+  // WebSocket proxy: renderer → main → backend WebSocket
+  ipcMain.handle('ws:connect', (_e, sessionId) => {
+    console.log('[ws:ipc] Connect request:', sessionId)
+    connectWebSocket(sessionId)
+    return { ok: true }
+  })
+  ipcMain.handle('ws:disconnect', (_e, sessionId) => {
+    console.log('[ws:ipc] Disconnect request:', sessionId)
+    disconnectWebSocket(sessionId)
+    return { ok: true }
+  })
+  ipcMain.handle('ws:send', (_e, sessionId, data) => {
+    return { ok: sendWebSocketMessage(sessionId, data) }
+  })
+  // Renderer registers to receive WebSocket messages
+  ipcMain.on('ws:listen', (e, sessionId) => {
+    const conn = wsConnections.get(sessionId)
+    if (conn) conn.listeners.add(e.sender.id)
+  })
 }
 
 // ─── Window ───────────────────────────────────────────────────────────────────
@@ -940,6 +1072,8 @@ function createWindow() {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadURL('app://./dist/index.html')
+    // Open DevTools in production for debugging WebSocket issues
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
   }
 
   mainWindow.on('closed', () => { mainWindow = null })
