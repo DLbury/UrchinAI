@@ -1003,6 +1003,22 @@ app.whenReady().then(async () => {
   // Apply ad blocking to both the default session and our named partition
   setupAdBlocking(electronSession.defaultSession)
   setupAdBlocking(electronSession.fromPartition(NANOBOT_PARTITION))
+
+  // Configure CORS and network settings for the session
+  const configureSession = (sess) => {
+    // Allow all CORS requests
+    sess.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': ["default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:"]
+        }
+      })
+    })
+  }
+  configureSession(electronSession.defaultSession)
+  configureSession(electronSession.fromPartition(NANOBOT_PARTITION))
+
   registerIpc()
   startBridgeServer()
   startBackend()
