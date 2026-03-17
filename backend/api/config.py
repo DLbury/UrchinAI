@@ -98,6 +98,7 @@ class ProviderUpdate(BaseModel):
     name: str
     apiKey: str = ""
     apiBase: str = ""
+    models: list[dict] = []  # [{"label": "显示名", "value": "模型ID"}, ...]
 
 
 @router.put("/providers/{name}")
@@ -109,6 +110,8 @@ async def update_provider(name: str, body: ProviderUpdate):
         existing["apiKey"] = body.apiKey
     if body.apiBase:
         existing["apiBase"] = body.apiBase
+    if body.models is not None:
+        existing["models"] = body.models
     cfg["providers"][name] = existing
     _write_config(cfg)
     return {"ok": True}

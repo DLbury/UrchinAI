@@ -65,3 +65,25 @@ def delete_script(script_id: str):
     data = [s for s in data if s.get("id") != script_id]
     _save(data)
     return {"ok": True}
+
+
+class ScriptUpdate(BaseModel):
+    name: str | None = None
+    prompt: str | None = None
+    icon: str | None = None
+
+
+@router.put("/{script_id}")
+def update_script(script_id: str, body: ScriptUpdate):
+    data = _load()
+    for s in data:
+        if s.get("id") == script_id:
+            if body.name is not None:
+                s["name"] = body.name.strip()
+            if body.prompt is not None:
+                s["prompt"] = body.prompt.strip()
+            if body.icon is not None:
+                s["icon"] = body.icon
+            _save(data)
+            return s
+    return {"error": "not found"}

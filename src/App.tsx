@@ -487,7 +487,11 @@ export default function App() {
 
   // ── Detach tab → new window ────────────────────────────────────────────────
   const detachTab = useCallback((tab: TabState, screenX: number, screenY: number) => {
-    const theme = localStorage.getItem('urchin-theme') || 'dark'
+    let theme = localStorage.getItem('urchin-theme') || 'dark'
+    // 如果是 system，获取系统主题
+    if (theme === 'system') {
+      theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    }
     eAPI?.detachTab(tab.url || '', screenX, screenY, theme)
     closeTab(tab.id)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

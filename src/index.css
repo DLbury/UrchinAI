@@ -45,7 +45,13 @@ body {
   overflow: hidden;
 }
 
-::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgb(var(--nb-hover)); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: rgb(var(--nb-text-muted)); }
+
+/* 快捷脚本栏 - 更细的滚动条 */
+.scrollbar-h-1::-webkit-scrollbar { height: 2px; }
+.scrollbar-h-1::-webkit-scrollbar-thumb { background: rgb(var(--nb-border)); }
+.scrollbar-h-1\.5::-webkit-scrollbar { height: 3px; }
+.scrollbar-h-1\.5::-webkit-scrollbar-thumb { background: rgb(var(--nb-text-muted)); }

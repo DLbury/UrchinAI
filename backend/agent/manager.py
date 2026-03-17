@@ -331,6 +331,11 @@ class AgentManager:
         self._history: list[dict] = []
         self._litellm_error: str | None = None  # 记录 litellm 加载失败原因
         self._nanobot_available = self._check_nanobot()
+        self._stop_requested: bool = False  # 停止标志
+
+    def stop(self) -> None:
+        """请求停止当前生成"""
+        self._stop_requested = True
 
     def _check_nanobot(self) -> bool:
         """Check if litellm is available. Captures all exceptions for diagnosis."""
@@ -350,6 +355,7 @@ class AgentManager:
 
     async def chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
         """Stream agent responses for a user message."""
+        self._stop_requested = False  # 重置停止标志
         self._history.append({"role": "user", "content": user_message})
 
         if self._nanobot_available:
@@ -426,6 +432,11 @@ class AgentManager:
 
                 stream = await litellm.acompletion(**call_kwargs)
                 async for chunk in stream:
+                    # 检查停止请求
+                    if self._stop_requested:
+                        yield AgentMessage("error", "已停止生成")
+                        return
+
                     if not chunk.choices:
                         continue
                     delta = chunk.choices[0].delta
@@ -454,6 +465,11 @@ class AgentManager:
                                     entry["name"] += tc_chunk.function.name
                                 if tc_chunk.function.arguments:
                                     entry["args_str"] += tc_chunk.function.arguments
+
+                # 检查停止请求（streaming 结束后）
+                if self._stop_requested:
+                    yield AgentMessage("error", "已停止生成")
+                    return
 
                 # ── If no tool calls, we're done ─────────────────────────────
                 if not pending_tool_calls:

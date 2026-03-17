@@ -1,6 +1,6 @@
 {
   "name": "urchin-electron",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "UrchinAI — Electron",
   "main": "electron/main.js",
   "type": "module",

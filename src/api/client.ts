@@ -46,8 +46,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const getConfig = () => request<{ config: Record<string, unknown> }>('/api/config')
 export const updateConfig = (config: Record<string, unknown>) =>
   request('/api/config', { method: 'PUT', body: JSON.stringify({ config }) })
-export const getProviders = () => request<{ providers: Record<string, { apiKey?: string; apiBase?: string }> }>('/api/config/providers')
-export const updateProvider = (name: string, data: { apiKey?: string; apiBase?: string }) =>
+export const getProviders = () => request<{ providers: Record<string, { apiKey?: string; apiBase?: string; models?: { label: string; value: string }[] }> }>('/api/config/providers')
+export const updateProvider = (name: string, data: { apiKey?: string; apiBase?: string; models?: { label: string; value: string }[] }) =>
   request('/api/config/providers/' + name, { method: 'PUT', body: JSON.stringify({ name, ...data }) })
 export const deleteProvider = (name: string) =>
   request('/api/config/providers/' + name, { method: 'DELETE' })
@@ -100,4 +100,6 @@ export const listScripts = () =>
   request<Array<{ id: string; name: string; prompt: string; icon: string }>>('/api/scripts')
 export const createScript = (name: string, prompt: string, icon?: string) =>
   request<{ id: string; name: string; prompt: string; icon: string }>('/api/scripts', { method: 'POST', body: JSON.stringify({ name, prompt, icon: icon ?? '⚡' }) })
+export const updateScript = (id: string, data: { name?: string; prompt?: string; icon?: string }) =>
+  request<{ id: string; name: string; prompt: string; icon: string }>(`/api/scripts/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteScript = (id: string) => request(`/api/scripts/${id}`, { method: 'DELETE' })

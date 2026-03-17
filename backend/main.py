@@ -12,6 +12,9 @@ Endpoints:
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import os
 import sys
 
@@ -21,9 +24,6 @@ if getattr(sys, 'frozen', False):
     os.environ['LITELLM_DONT_SHOW_FEEDBACK_BOX'] = 'True'
     if hasattr(sys, '_MEIPASS') and sys._MEIPASS not in sys.path:
         sys.path.insert(0, sys._MEIPASS)
-
-import json
-import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -91,6 +91,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         return
 
     try:
+        chat_task = None
         while True:
             raw = await websocket.receive_text()
             try:
@@ -104,8 +105,25 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 content = data.get("content", "").strip()
                 if not content:
                     continue
-                async for msg in manager.chat(content):
-                    await websocket.send_text(json.dumps(msg.to_dict()))
+
+                async def send_chat():
+                    async for msg in manager.chat(content):
+                        await websocket.send_text(json.dumps(msg.to_dict()))
+
+                chat_task = asyncio.create_task(send_chat())
+                try:
+                    await chat_task
+                except asyncio.CancelledError:
+                    logger.info("Chat cancelled for session: %s", session_id)
+                chat_task = None
+
+            elif msg_type == "stop":
+                # 停止当前生成
+                if chat_task:
+                    chat_task.cancel()
+                    manager.stop()
+                    logger.info("Stop requested for session: %s", session_id)
+                await websocket.send_text(json.dumps({"type": "stopped"}))
 
             elif msg_type == "clear_history":
                 manager.clear_history()

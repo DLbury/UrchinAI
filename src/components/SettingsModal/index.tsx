@@ -3,7 +3,7 @@ import {
   X, Settings, Save, Plus, Trash2, Eye, EyeOff,
   Loader2, CheckCircle, Puzzle, Server, Terminal,
   Globe, Edit2, Check, AlertCircle, ExternalLink, BookOpen, Brain, Sparkles,
-  MousePointer2, Sun, Moon,
+  MousePointer2, Sun, Moon, Monitor,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../hooks/useTheme'
@@ -19,7 +19,16 @@ import {
 type Tab = 'model' | 'skills' | 'mcp' | 'memory' | 'appearance'
 type SaveState = 'idle' | 'saving' | 'saved'
 
-interface ProviderRow { name: string; apiKey: string; apiBase: string; showKey: boolean }
+interface ModelItem { label: string; value: string }
+interface ProviderRow {
+  name: string
+  apiKey: string
+  apiBase: string
+  models: ModelItem[]
+  showKey: boolean
+  newModelLabel: string
+  newModelValue: string
+}
 interface Skill { id: string; name: string; description: string }
 interface MCPServer {
   name: string; type: string; command?: string; args?: string[]
@@ -128,51 +137,55 @@ function parseArgsSafe(s: string): string[] {
 // ── 模型配置标签页 ────────────────────────────────────────────────────────────
 
 function ModelTab() {
-  const [model, setModel] = useState('')
-  const [selectedProvider, setSelectedProvider] = useState('')
+  const [currentModel, setCurrentModel] = useState('')
+  const [currentProvider, setCurrentProvider] = useState('')
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [newProviderName, setNewProviderName] = useState('')
   const [loading, setLoading] = useState(true)
   const [modelSave, triggerModelSave] = useSaveState()
-  // 是否使用自定义模型名（不从预设选择）
-  const [customModelMode, setCustomModelMode] = useState(false)
+  const loadedRef = useRef(false)
 
   const load = useCallback(async () => {
+    if (loadedRef.current) return
+    loadedRef.current = true
     setLoading(true)
     try {
       const cfg = await getConfig()
       const raw = cfg.config as Record<string, unknown>
       const agents = raw?.agents as Record<string, unknown> | undefined
       const defaults = agents?.defaults as Record<string, unknown> | undefined
-      const savedModel = (defaults?.model as string) ?? ''
-      const savedProvider = (defaults?.provider as string) ?? ''
-      setModel(savedModel)
-      setSelectedProvider(savedProvider)
-      const rawProviders = raw?.providers as Record<string, { apiKey?: string; apiBase?: string }> | undefined
+      setCurrentModel((defaults?.model as string) ?? '')
+      setCurrentProvider((defaults?.provider as string) ?? '')
+
+      const rawProviders = raw?.providers as Record<string, { apiKey?: string; apiBase?: string; models?: ModelItem[] }> | undefined
       if (rawProviders) {
         setProviders(Object.entries(rawProviders).map(([name, v]) => ({
-          name, apiKey: v?.apiKey ?? '', apiBase: v?.apiBase ?? '', showKey: false,
+          name,
+          apiKey: v?.apiKey ?? '',
+          apiBase: v?.apiBase ?? '',
+          models: v?.models ?? PRESET_MODELS[name] ?? [],
+          showKey: false,
+          newModelLabel: '',
+          newModelValue: '',
         })))
-      }
-      // 如果已保存的模型不在预设列表里，默认进入自定义模式
-      const presets = PRESET_MODELS[savedProvider] ?? PRESET_MODELS[Object.keys(rawProviders ?? {})[0] ?? ''] ?? []
-      if (savedModel && !presets.find(p => p.value === savedModel)) {
-        setCustomModelMode(true)
       }
     } finally { setLoading(false) }
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  const saveModel = async () => {
-    await updateModel(model, selectedProvider || undefined)
+  // 保存当前选中的模型
+  const saveCurrentModel = async () => {
+    await updateModel(currentModel, currentProvider || undefined)
     triggerModelSave()
   }
 
+  // 保存服务商配置（包括模型列表）
   const saveProvider = async (row: ProviderRow) => {
     await updateProvider(row.name, {
       apiKey: row.apiKey !== MASKED ? row.apiKey : undefined,
       apiBase: row.apiBase,
+      models: row.models,
     })
   }
 
@@ -180,149 +193,117 @@ function ModelTab() {
     if (!confirm(`确认删除服务商 "${name}"？`)) return
     await deleteProvider(name)
     setProviders(p => p.filter(r => r.name !== name))
+    // 如果当前选中的是这个服务商，清空选择
+    if (currentProvider === name) {
+      setCurrentProvider('')
+      setCurrentModel('')
+    }
   }
 
   const addProvider = () => {
     const name = newProviderName.trim()
     if (!name || providers.find(p => p.name === name)) return
-    setProviders(p => [...p, { name, apiKey: '', apiBase: '', showKey: false }])
+    setProviders(p => [...p, {
+      name,
+      apiKey: '',
+      apiBase: '',
+      models: PRESET_MODELS[name] ?? [],
+      showKey: false,
+      newModelLabel: '',
+      newModelValue: '',
+    }])
     setNewProviderName('')
   }
 
   const updateRow = (idx: number, patch: Partial<ProviderRow>) =>
     setProviders(p => p.map((r, i) => i === idx ? { ...r, ...patch } : r))
 
-  if (loading) return <div className="flex items-center justify-center h-48"><Loader2 size={24} className="animate-spin text-brand-400" /></div>
+  // 获取所有已配置的模型（用于当前模型选择）
+  const allConfiguredModels = providers.flatMap(p =>
+    (p.models || []).map(m => ({ ...m, provider: p.name, providerLabel: PROVIDER_LABELS[p.name] || p.name }))
+  )
 
-  // 当前服务商的预设模型列表
-  const currentProvider = selectedProvider || providers[0]?.name || ''
-  const presets = PRESET_MODELS[currentProvider] ?? []
+  if (loading) return <div className="flex items-center justify-center h-48"><Loader2 size={24} className="animate-spin text-brand-400" /></div>
 
   return (
     <div className="space-y-8">
-      {/* ── 当前模型 ── */}
+      {/* ── 当前使用的模型 ── */}
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">当前使用的模型</h3>
-        <div className="grid gap-4">
-          {/* 服务商选择：已配置的 + 预置列表（去重合并） */}
-          <div>
-            <label className="block text-sm font-medium text-nb-text-soft mb-1.5">服务商</label>
+        {allConfiguredModels.length === 0 ? (
+          <div className="text-sm text-nb-text-muted py-2">
+            请先在下方配置服务商和模型
+          </div>
+        ) : (
+          <div className="grid gap-4">
             <select
-              value={selectedProvider}
-              onChange={e => { setSelectedProvider(e.target.value); setCustomModelMode(false); setModel('') }}
+              value={currentProvider ? `${currentProvider}|${currentModel}` : ''}
+              onChange={e => {
+                const [provider, model] = e.target.value.split('|')
+                setCurrentProvider(provider)
+                setCurrentModel(model)
+              }}
               className="w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
             >
-              <option value="">自动检测（根据模型名）</option>
-              {/* 已配置的服务商优先显示 */}
-              {providers.length > 0 && (
-                <optgroup label="已配置">
-                  {providers.map(p => (
-                    <option key={p.name} value={p.name}>{p.name}</option>
+              <option value="">请选择模型…</option>
+              {providers.filter(p => p.models?.length > 0).map(p => (
+                <optgroup key={p.name} label={PROVIDER_LABELS[p.name] || p.name}>
+                  {p.models.map(m => (
+                    <option key={`${p.name}|${m.value}`} value={`${p.name}|${m.value}`}>
+                      {m.label}
+                    </option>
                   ))}
                 </optgroup>
-              )}
-              {/* 预置服务商（过滤掉已配置的） */}
-              <optgroup label="其他预置">
-                {KNOWN_PROVIDERS
-                  .filter(p => !providers.find(r => r.name === p))
-                  .map(p => <option key={p} value={p}>{p}</option>)}
-              </optgroup>
+              ))}
             </select>
-          </div>
 
-          {/* 模型选择 */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-sm font-medium text-nb-text-soft">模型名称</label>
-              <button
-                onClick={() => setCustomModelMode(v => !v)}
-                className="text-xs text-brand-500 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 transition-colors"
-              >
-                {customModelMode ? '从预设选择' : '自定义输入'}
-              </button>
-            </div>
-
-            {(customModelMode || presets.length === 0) ? (
-              // 自定义输入框（无预设时自动退到此模式）
-              <>
-                <input
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  placeholder="输入完整模型名称，如 qwen-max"
-                  className="w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 transition-colors font-mono"
-                />
-                {presets.length === 0 && !customModelMode && (
-                  <p className="text-xs text-nb-text-muted mt-1">该服务商暂无内置预设，请手动输入模型名称</p>
-                )}
-              </>
-            ) : (
-              // 预设下拉 + 快捷按钮
-              <>
-                <select
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  className="w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
-                >
-                  <option value="">请选择模型…</option>
-                  {presets.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                </select>
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {presets.map(p => (
-                    <button key={p.value} onClick={() => setModel(p.value)}
-                      className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
-                        model === p.value
-                          ? 'bg-brand-600 border-brand-500 text-white'
-                          : 'bg-nb-card border-nb-border text-nb-text-dim hover:border-nb-text-dim hover:text-nb-text-soft'
-                      }`}>
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {/* 当前值预览 */}
-            {model && (
-              <p className="text-xs text-nb-text-muted mt-1.5 font-mono bg-nb-card/50 rounded-lg px-3 py-1.5">
-                当前：{model}
+            {currentModel && (
+              <p className="text-xs text-nb-text-muted font-mono bg-nb-card/50 rounded-lg px-3 py-1.5">
+                {PROVIDER_LABELS[currentProvider] || currentProvider} / {currentModel}
               </p>
             )}
-          </div>
 
-          <button onClick={saveModel}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-sm font-medium transition-colors w-fit">
-            {modelSave === 'saving' ? <Loader2 size={15} className="animate-spin" /> :
-             modelSave === 'saved' ? <CheckCircle size={15} className="text-green-300" /> :
-             <Save size={15} />}
-            {modelSave === 'saved' ? '已保存！' : '保存模型配置'}
-          </button>
-        </div>
+            <button onClick={saveCurrentModel}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-sm font-medium transition-colors w-fit">
+              {modelSave === 'saving' ? <Loader2 size={15} className="animate-spin" /> :
+               modelSave === 'saved' ? <CheckCircle size={15} className="text-green-300" /> :
+               <Save size={15} />}
+              {modelSave === 'saved' ? '已保存！' : '保存当前模型'}
+            </button>
+          </div>
+        )}
       </section>
 
       {/* ── API 服务商配置 ── */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">API 服务商</h3>
-        <div className="space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">API 服务商配置</h3>
+        <p className="text-xs text-nb-text-dim mb-4">配置服务商的 API Key 和可用模型列表。每个服务商可以添加多个模型。</p>
+        <div className="space-y-4">
           {providers.map((row, idx) => (
-            <ProviderCard key={row.name} row={row}
+            <ProviderCard
+              key={row.name}
+              row={row}
               onChange={patch => updateRow(idx, patch)}
               onSave={() => saveProvider(row)}
-              onDelete={() => removeProvider(row.name)} />
+              onDelete={() => removeProvider(row.name)}
+            />
           ))}
 
           {/* 添加新服务商 */}
-          <div className="flex gap-2 pt-1">
+          <div className="flex gap-2 pt-2">
             <select value={newProviderName} onChange={e => setNewProviderName(e.target.value)}
-              className="flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500">
+              className="flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500">
               <option value="">选择要添加的服务商…</option>
-              {KNOWN_PROVIDERS.filter(p => !providers.find(r => r.name === p)).map(p => <option key={p} value={p}>{p}</option>)}
+              {KNOWN_PROVIDERS.filter(p => !providers.find(r => r.name === p)).map(p => (
+                <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
+              ))}
             </select>
             <input value={newProviderName} onChange={e => setNewProviderName(e.target.value)}
               placeholder="自定义名称"
-              className="w-28 bg-nb-card border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
+              className="w-28 bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
             <button onClick={addProvider} disabled={!newProviderName.trim()}
-              className="px-3 rounded-xl bg-nb-card border border-nb-border hover:bg-nb-raised text-nb-text-soft disabled:opacity-40 transition-colors" title="添加">
-              <Plus size={16} />
+              className="px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-40 disabled:hover:bg-brand-600 transition-colors text-sm">
+              添加
             </button>
           </div>
         </div>
@@ -341,10 +322,54 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
 
   const handleSave = async () => { await onSave(); triggerSave() }
 
+  // 自动保存模型列表
+  const saveModels = async (models: ModelItem[]) => {
+    await updateProvider(row.name, {
+      apiKey: row.apiKey !== MASKED ? row.apiKey : undefined,
+      apiBase: row.apiBase,
+      models,
+    })
+    triggerSave()
+  }
+
+  // 添加模型并自动保存
+  const addModel = async () => {
+    const label = row.newModelLabel.trim()
+    const value = row.newModelValue.trim()
+    if (!label || !value) return
+    if (row.models.find(m => m.value === value)) return
+    const newModels = [...row.models, { label, value }]
+    onChange({
+      models: newModels,
+      newModelLabel: '',
+      newModelValue: '',
+    })
+    await saveModels(newModels)
+  }
+
+  // 删除模型并自动保存
+  const removeModel = async (value: string) => {
+    const newModels = row.models.filter(m => m.value !== value)
+    onChange({ models: newModels })
+    await saveModels(newModels)
+  }
+
+  // 从预设添加模型并自动保存
+  const addFromPresets = async (model: { label: string; value: string }) => {
+    if (row.models.find(m => m.value === model.value)) return
+    const newModels = [...row.models, model]
+    onChange({ models: newModels })
+    await saveModels(newModels)
+  }
+
+  const presets = PRESET_MODELS[row.name] || []
+  const suggestedModels = presets.filter(p => !row.models.find(m => m.value === p.value))
+
   return (
-    <div className="bg-nb-card border border-nb-border rounded-2xl p-4 space-y-3">
+    <div className="bg-nb-card border border-nb-border rounded-2xl p-4 space-y-4">
+      {/* 标题栏 */}
       <div className="flex items-center justify-between">
-        <span className="text-sm font-mono font-semibold text-brand-400">{row.name}</span>
+        <span className="text-sm font-semibold text-brand-400">{PROVIDER_LABELS[row.name] || row.name}</span>
         <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-muted hover:text-red-600 dark:hover:text-red-400 transition-colors">
           <Trash2 size={14} />
         </button>
@@ -368,22 +393,91 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
       {/* API Base URL */}
       <div>
         <label className="block text-xs text-nb-text-dim mb-1">
-          API Base URL <span className="text-nb-text-muted">（可选，自定义端点）</span>
+          API Base URL <span className="text-nb-text-muted">（可选）</span>
         </label>
         <input value={row.apiBase} onChange={e => onChange({ apiBase: e.target.value })}
           placeholder="https://api.provider.com/v1"
           className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500 transition-colors" />
       </div>
 
+      {/* 模型列表 */}
+      <div>
+        <label className="block text-xs text-nb-text-dim mb-2">可用模型</label>
+
+        {/* 已配置的模型 */}
+        {row.models.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {row.models.map(m => (
+              <div key={m.value} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-nb-raised border border-nb-border text-xs">
+                <span className="text-nb-text-soft">{m.label}</span>
+                <button onClick={() => removeModel(m.value)} className="text-nb-text-muted hover:text-red-400">
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 添加自定义模型 */}
+        <div className="flex gap-2 mb-2">
+          <input value={row.newModelLabel} onChange={e => onChange({ newModelLabel: e.target.value })}
+            placeholder="显示名"
+            className="flex-1 bg-nb-raised border border-nb-border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-brand-500" />
+          <input value={row.newModelValue} onChange={e => onChange({ newModelValue: e.target.value })}
+            placeholder="模型ID"
+            className="flex-1 bg-nb-raised border border-nb-border rounded-lg px-2 py-1.5 text-xs font-mono outline-none focus:border-brand-500" />
+          <button onClick={addModel} disabled={!row.newModelLabel.trim() || !row.newModelValue.trim()}
+            className="px-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-40 transition-colors">
+            <Plus size={14} />
+          </button>
+        </div>
+
+        {/* 推荐模型 */}
+        {suggestedModels.length > 0 && (
+          <div>
+            <p className="text-[10px] text-nb-text-muted mb-1">推荐模型（点击添加）：</p>
+            <div className="flex flex-wrap gap-1">
+              {suggestedModels.map(m => (
+                <button key={m.value} onClick={() => addFromPresets(m)}
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-nb-border hover:border-brand-500 hover:text-brand-400 text-nb-text-dim transition-colors">
+                  + {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 保存按钮（仅保存 API Key 和 Base URL） */}
       <button onClick={handleSave}
         className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-nb-card border border-nb-border hover:bg-nb-raised text-nb-text-soft transition-colors">
         {saveState === 'saving' ? <Loader2 size={12} className="animate-spin" /> :
          saveState === 'saved' ? <CheckCircle size={12} className="text-green-600 dark:text-green-400" /> :
          <Save size={12} />}
-        {saveState === 'saved' ? '已保存' : '保存'}
+        {saveState === 'saved' ? '已保存' : '保存 API 配置'}
       </button>
     </div>
   )
+}
+
+// 服务商显示名称（提取为常量，供其他组件使用）
+const PROVIDER_LABELS: Record<string, string> = {
+  openrouter: 'OpenRouter',
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  deepseek: 'DeepSeek',
+  gemini: 'Google Gemini',
+  groq: 'Groq',
+  minimax: 'MiniMax',
+  moonshot: 'Moonshot',
+  zhipu: '智谱 AI',
+  dashscope: '通义千问',
+  volcengine: '火山引擎',
+  siliconflow: 'SiliconFlow',
+  aihubmix: 'AIHubMix',
+  azure_openai: 'Azure OpenAI',
+  vllm: 'vLLM',
+  custom: '自定义',
 }
 
 // ── 技能标签页 ────────────────────────────────────────────────────────────────
@@ -395,8 +489,11 @@ function SkillsTab() {
   const [installName, setInstallName] = useState('')
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState('')
+  const loadedRef = useRef(false)
 
   const reload = useCallback(async () => {
+    if (loadedRef.current) return
+    loadedRef.current = true
     setLoading(true)
     try { const d = await listSkills(); setSkills(d.skills) } finally { setLoading(false) }
   }, [])
@@ -524,8 +621,11 @@ function MCPTab() {
   const [form, setForm] = useState<MCPFormState>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const loadedRef = useRef(false)
 
   const reload = useCallback(async () => {
+    if (loadedRef.current) return
+    loadedRef.current = true
     setLoading(true)
     try { const d = await listMCPServers(); setServers(d.servers as MCPServer[]) } finally { setLoading(false) }
   }, [])
@@ -682,8 +782,11 @@ function MemoryTab() {
   const [items, setItems] = useState<{ id: string; content: string; createdAt: number }[]>([])
   const [newText, setNewText] = useState('')
   const [loading, setLoading] = useState(true)
+  const loadedRef = useRef(false)
 
   const load = useCallback(async () => {
+    if (loadedRef.current) return
+    loadedRef.current = true
     setLoading(true)
     try { setItems(await listMemory()) } finally { setLoading(false) }
   }, [])
@@ -809,7 +912,7 @@ function AppearanceTab() {
   const eAPI = (window as any).electronAPI
   const [fxOn,  setFxOn]  = useState(true)
   const [adOn,  setAdOn]  = useState(true)
-  const { setTheme, isDark } = useTheme()
+  const { theme, setTheme, isDark } = useTheme()
 
   useEffect(() => {
     eAPI?.getFXEnabled().then(setFxOn).catch(() => {})
@@ -871,11 +974,11 @@ function AppearanceTab() {
           <p className="text-sm font-semibold text-nb-text">{t('settings.theme')}</p>
           <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">{t('settings.themeDesc')}</p>
         </div>
-        <div className="flex items-center gap-1.5 mt-0.5 bg-nb-raised rounded-xl p-1 shrink-0">
+        <div className="flex items-center gap-1 mt-0.5 bg-nb-raised rounded-xl p-1 shrink-0">
           <button
             onClick={() => setTheme('light')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              !isDark
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              theme === 'light'
                 ? 'bg-nb-card text-nb-text shadow-sm'
                 : 'text-nb-text-dim hover:text-nb-text'
             }`}
@@ -883,9 +986,19 @@ function AppearanceTab() {
             <Sun size={13} /> {t('settings.day')}
           </button>
           <button
+            onClick={() => setTheme('system')}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              theme === 'system'
+                ? 'bg-nb-card text-nb-text shadow-sm'
+                : 'text-nb-text-dim hover:text-nb-text'
+            }`}
+          >
+            <Monitor size={13} /> {t('settings.system')}
+          </button>
+          <button
             onClick={() => setTheme('dark')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              isDark
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              theme === 'dark'
                 ? 'bg-nb-card text-nb-text shadow-sm'
                 : 'text-nb-text-dim hover:text-nb-text'
             }`}
