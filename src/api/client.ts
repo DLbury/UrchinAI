@@ -1,19 +1,45 @@
-// In Electron production (file://), use fixed backend address
-// In development, use relative path (proxied via vite dev server)
-const BASE = window.location.hostname === 'localhost' && window.location.port === '5174'
-  ? ''
-  : 'http://127.0.0.1:8001'
+// In development (Vite dev server), use relative path (proxied)
+// In production: use IPC proxy when in Electron (bypasses CORS from app://), else direct fetch
+const BASE = import.meta.env.DEV ? '' : 'http://127.0.0.1:8001'
+const eAPI = (typeof window !== 'undefined' && (window as any).electronAPI) as { apiRequest?: (method: string, path: string, body?: string) => Promise<unknown> } | undefined
+
+const DEBUG = !import.meta.env.DEV
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options,
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`${res.status} ${res.statusText}: ${text}`)
+  const method = (options?.method || 'GET').toUpperCase()
+  const body = options?.body as string | undefined
+
+  // Use IPC proxy in Electron packaged mode (avoids CORS from app:// origin)
+  if (eAPI?.apiRequest && !import.meta.env.DEV) {
+    if (DEBUG) console.log('[api] IPC proxy:', method, path)
+    try {
+      const result = await eAPI.apiRequest(method, path, body) as T
+      if (DEBUG) console.log('[api] IPC proxy OK:', path)
+      return result
+    } catch (err) {
+      if (DEBUG) console.error('[api] IPC proxy FAIL:', path, err)
+      throw err
+    }
   }
-  return res.json() as Promise<T>
+
+  const url = BASE + path
+  if (DEBUG) console.log('[api] fetch:', method, url)
+  try {
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', ...options?.headers },
+      ...options,
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      if (DEBUG) console.error('[api] fetch FAIL:', path, res.status, text)
+      throw new Error(`${res.status} ${res.statusText}: ${text}`)
+    }
+    if (DEBUG) console.log('[api] fetch OK:', path)
+    return res.json() as Promise<T>
+  } catch (err) {
+    if (DEBUG) console.error('[api] fetch ERROR:', path, err)
+    throw err
+  }
 }
 
 // Config

@@ -1,6 +1,8 @@
 <div align="center">
 
-# UrchinAI 浏览器
+<img src="logo.png" alt="UrchinAI" width="120" />
+
+# UrchinAI
 
 **AI 驱动的智能桌面浏览器，内置智能代理**
 
@@ -19,9 +21,9 @@
 
 ## 项目简介
 
-UrchinAI 浏览器是一款开源的 AI 智能桌面浏览器，内置智能代理。与传统浏览器不同，UrchinAI 允许你通过自然语言命令控制网页浏览。只需告诉 AI 你想做什么，它就会自动导航网站、点击元素、填写表单，完成复杂的自动化任务。
+UrchinAI是一款开源的 AI 智能桌面浏览器，内置智能代理。与传统浏览器不同，UrchinAI 允许你通过自然语言命令控制网页浏览。只需告诉 AI 你想做什么，它就会自动导航网站、点击元素、填写表单，完成复杂的自动化任务。
 
-### 为什么选择 UrchinAI 浏览器？
+### 为什么选择 UrchinAI？
 
 - **自然语言控制**：无需学习复杂的自动化脚本，直接描述你想要做什么
 - **多模型支持**：支持 OpenAI、Anthropic Claude、Google Gemini、DeepSeek 等 10+ 种 AI 服务商
@@ -63,7 +65,7 @@ UrchinAI 浏览器是一款开源的 AI 智能桌面浏览器，内置智能代�
 <div align="center">
 
 ### 主界面
-<img src="docs/screenshots/screenshot-main.png" alt="UrchinAI 浏览器主界面，展示 AI 聊天面板和网页内容" width="800"/>
+<img src="docs/screenshots/screenshot-main.png" alt="UrchinAI主界面，展示 AI 聊天面板和网页内容" width="800"/>
 
 ### 设置面板
 <img src="docs/screenshots/screenshot-settings.png" alt="设置面板，配置 AI 服务商" width="500"/>
@@ -74,7 +76,7 @@ UrchinAI 浏览器是一款开源的 AI 智能桌面浏览器，内置智能代�
 
 ## 支持的 AI 服务商
 
-UrchinAI 浏览器通过 LiteLLM 支持多种大语言模型服务商：
+UrchinAI通过 LiteLLM 支持多种大语言模型服务商：
 
 | 服务商 | 模型 | 需要 API Key |
 |--------|------|--------------|
@@ -209,7 +211,7 @@ urchinai-browser/
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    UrchinAI 浏览器                           │
+│                    UrchinAI                           │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
 │  │   React UI  │◄──►│  Electron   │◄──►│  BrowserView│     │
@@ -319,7 +321,7 @@ npm run dev
 
 ### 可以不使用 AI 功能吗？
 
-当然可以！UrchinAI 浏览器即使不配置 AI 也能作为普通浏览器使用，AI 功能是可选的。
+当然可以！UrchinAI即使不配置 AI 也能作为普通浏览器使用，AI 功能是可选的。
 
 ---
 

@@ -44,6 +44,9 @@
     "empty": "发送消息，开始与智能体对话",
     "emptyHint": "智能体可以控制左侧的浏览器",
     "clearHistory": "清空对话",
+    "switchModel": "切换模型",
+    "noModelsConfigured": "当前服务商暂无预设模型",
+    "configureModels": "配置模型和服务商...",
     "status": {
       "connecting": "连接中",
       "connected": "已连接",

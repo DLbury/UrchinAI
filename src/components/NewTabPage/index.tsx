@@ -164,6 +164,9 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     <div className="absolute inset-0 bg-nb-base overflow-y-auto scrollbar-thin">
       <div className="flex flex-col items-center px-8 pt-14 pb-12 gap-8 min-h-full">
 
+        {/* Logo */}
+        <img src="./logo.png" alt="UrchinAI" className="w-20 h-20 object-contain rounded-2xl" />
+
         {/* Clock */}
         <LiveClock />
 

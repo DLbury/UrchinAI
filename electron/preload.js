@@ -43,4 +43,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('backend:ready', () => cb())
     return () => ipcRenderer.removeAllListeners('backend:ready')
   },
+
+  // ── API proxy (bypasses CORS when loading from app://) ─────────────────────
+  apiRequest: (method, path, body) => ipcRenderer.invoke('api:request', { method, path, body }),
+
+  // ── WebSocket proxy (bypasses app:// origin restriction for ws://) ───────
+  wsConnect: (sessionId)    => ipcRenderer.invoke('ws:connect', sessionId),
+  wsDisconnect: (sessionId) => ipcRenderer.invoke('ws:disconnect', sessionId),
+  wsSend: (sessionId, data) => ipcRenderer.invoke('ws:send', sessionId, data),
+  onWsMessage: (callback) => {
+    const handler = (_e, msg) => callback(msg)
+    ipcRenderer.on('ws:message', handler)
+    return () => ipcRenderer.removeListener('ws:message', handler)
+  },
+  onWsStatus: (callback) => {
+    const handler = (_e, status) => callback(status)
+    ipcRenderer.on('ws:status', handler)
+    return () => ipcRenderer.removeListener('ws:status', handler)
+  },
 })

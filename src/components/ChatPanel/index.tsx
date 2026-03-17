@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, Trash2, Bot, User, ChevronDown, ChevronRight, Terminal, CheckCircle, XCircle, Loader2, Wifi, WifiOff, Zap } from 'lucide-react'
+import { Send, Trash2, Bot, User, ChevronDown, ChevronRight, Terminal, CheckCircle, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings } from 'lucide-react'
 import { useWebSocket } from '../../hooks/useWebSocket'
-import { listScripts } from '../../api/client'
+import { listScripts, getConfig, updateModel } from '../../api/client'
 import type { ChatMessage, ToolCall, WSMessage } from '../../types'
 
 interface ChatPanelProps {
@@ -10,10 +10,69 @@ interface ChatPanelProps {
   onAgentNavigate?: (url: string) => void
   /** Ref that parent can use to programmatically send a message */
   sendRef?: React.MutableRefObject<((text: string) => void) | null>
+  onOpenSettings?: () => void
+}
+
+// 每个服务商的推荐模型
+const PRESET_MODELS: Record<string, { label: string; value: string }[]> = {
+  openrouter: [
+    { label: 'Claude Opus 4.5', value: 'anthropic/claude-opus-4-5' },
+    { label: 'Claude Sonnet 4.6', value: 'anthropic/claude-sonnet-4-6' },
+    { label: 'GPT-4o', value: 'openai/gpt-4o' },
+    { label: 'Gemini 2.0 Flash', value: 'google/gemini-2.0-flash-001' },
+    { label: 'DeepSeek R1', value: 'deepseek/deepseek-r1' },
+  ],
+  anthropic: [
+    { label: 'Claude Opus 4.5', value: 'claude-opus-4-5' },
+    { label: 'Claude Sonnet 4.6', value: 'claude-sonnet-4-6' },
+    { label: 'Claude Haiku 3.5', value: 'claude-haiku-3-5' },
+  ],
+  openai: [
+    { label: 'GPT-4o', value: 'gpt-4o' },
+    { label: 'GPT-4o mini', value: 'gpt-4o-mini' },
+    { label: 'o3-mini', value: 'o3-mini' },
+  ],
+  deepseek: [
+    { label: 'DeepSeek Chat', value: 'deepseek-chat' },
+    { label: 'DeepSeek Reasoner', value: 'deepseek-reasoner' },
+  ],
+  gemini: [
+    { label: 'Gemini 2.0 Flash', value: 'gemini-2.0-flash' },
+    { label: 'Gemini 2.0 Pro', value: 'gemini-2.0-pro' },
+  ],
+  groq: [
+    { label: 'Llama 3.3 70B', value: 'llama-3.3-70b-versatile' },
+    { label: 'Mixtral 8x7B', value: 'mixtral-8x7b-32768' },
+  ],
+  moonshot: [
+    { label: 'Kimi K2.5', value: 'kimi-k2.5' },
+    { label: 'moonshot-v1-8k', value: 'moonshot-v1-8k' },
+  ],
+  zhipu: [
+    { label: 'GLM-4', value: 'glm-4' },
+    { label: 'GLM-4-Flash', value: 'glm-4-flash' },
+  ],
+  dashscope: [
+    { label: 'Qwen Max', value: 'qwen-max' },
+    { label: 'Qwen Plus', value: 'qwen-plus' },
+  ],
+  volcengine: [
+    { label: 'Doubao Pro 32k', value: 'doubao-pro-32k' },
+    { label: 'Doubao Lite 32k', value: 'doubao-lite-32k' },
+  ],
+  siliconflow: [
+    { label: 'DeepSeek-V3', value: 'deepseek-ai/DeepSeek-V3' },
+    { label: 'Qwen2.5 72B', value: 'Qwen/Qwen2.5-72B-Instruct' },
+  ],
+  minimax: [
+    { label: 'MiniMax-01', value: 'minimax-01' },
+    { label: 'abab6.5s', value: 'abab6.5s-chat' },
+  ],
 }
 
 
 function ToolCallCard({ tool }: { tool: ToolCall }) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
 
   const statusIcon = {
@@ -91,18 +150,136 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
 
 interface Script { id: string; name: string; prompt: string; icon: string }
 
-export default function ChatPanel({ sessionId, onAgentNavigate, sendRef }: ChatPanelProps) {
+// 模型选择器组件
+function ModelSelector({
+  currentModel,
+  currentProvider,
+  onSelect,
+  onOpenSettings,
+}: {
+  currentModel: string
+  currentProvider: string
+  onSelect: (model: string, provider: string) => void
+  onOpenSettings?: () => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // 获取当前模型的显示名称
+  const getModelLabel = (model: string, provider: string) => {
+    const presets = PRESET_MODELS[provider] || []
+    const found = presets.find(p => p.value === model)
+    if (found) return found.label
+    // 截断长模型名
+    return model.length > 15 ? model.slice(0, 15) + '...' : model
+  }
+
+  // 关闭下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // 获取当前配置的提供商的所有模型
+  const availableModels = PRESET_MODELS[currentProvider] || []
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-0.5 px-2 py-1.5 rounded-md text-xs text-nb-text-dim hover:text-nb-text hover:bg-nb-hover transition-colors"
+        title={t('chat.switchModel')}
+      >
+        <span className="max-w-[80px] truncate">{getModelLabel(currentModel, currentProvider)}</span>
+        {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full right-0 mb-2 w-48 bg-nb-card border border-nb-border rounded-lg shadow-xl z-50 overflow-hidden">
+          <div className="max-h-40 overflow-y-auto">
+            {availableModels.map(m => (
+              <button
+                key={m.value}
+                onClick={() => {
+                  onSelect(m.value, currentProvider)
+                  setOpen(false)
+                }}
+                className={`flex items-center gap-2 w-full px-3 py-2 text-left text-xs hover:bg-nb-raised transition-colors ${
+                  currentModel === m.value ? 'text-brand-400 bg-nb-raised/50' : 'text-nb-text'
+                }`}
+              >
+                {currentModel === m.value && <Check size={12} className="shrink-0" />}
+                <span className={currentModel === m.value ? '' : 'ml-4'}>{m.label}</span>
+              </button>
+            ))}
+            {availableModels.length === 0 && (
+              <div className="px-3 py-2 text-xs text-nb-text-muted">
+                {t('chat.noModelsConfigured')}
+              </div>
+            )}
+          </div>
+          <div className="border-t border-nb-border">
+            <button
+              onClick={() => {
+                setOpen(false)
+                onOpenSettings?.()
+              }}
+              className="flex items-center gap-2 w-full px-3 py-2 text-left text-xs text-nb-text-dim hover:text-nb-text hover:bg-nb-raised transition-colors"
+            >
+              <Settings size={12} />
+              <span>{t('chat.configureModels')}</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenSettings }: ChatPanelProps) {
   const { t } = useTranslation()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [scripts, setScripts] = useState<Script[]>([])
+  const [currentModel, setCurrentModel] = useState('')
+  const [currentProvider, setCurrentProvider] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const streamingMsgIdRef = useRef<string | null>(null)
   const pendingToolsRef = useRef<Map<string, string>>(new Map())
 
   const { send, onMessage, status, reconnect } = useWebSocket(sessionId)
+
+  // 加载配置
+  const loadConfig = useCallback(async () => {
+    try {
+      const cfg = await getConfig()
+      const raw = cfg.config as Record<string, unknown>
+      const agents = raw?.agents as Record<string, unknown> | undefined
+      const defaults = agents?.defaults as Record<string, unknown> | undefined
+      setCurrentModel((defaults?.model as string) ?? '')
+      setCurrentProvider((defaults?.provider as string) ?? '')
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    loadConfig()
+  }, [loadConfig])
+
+  // 切换模型
+  const handleModelChange = async (model: string, provider: string) => {
+    try {
+      await updateModel(model, provider)
+      setCurrentModel(model)
+    } catch {}
+  }
 
   // When the Electron main process signals the backend is ready, force-reconnect
   useEffect(() => {
@@ -186,8 +363,26 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef }: ChatP
   }, [sendRef, sendMessage])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(undefined) }
+    // Enter 发送，Shift+Enter 换行
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage(undefined)
+    }
   }, [sendMessage])
+
+  // 自动调整输入框高度
+  const adjustTextareaHeight = useCallback(() => {
+    const textarea = inputRef.current
+    if (textarea) {
+      textarea.style.height = 'auto'
+      const newHeight = Math.min(textarea.scrollHeight, 128) // 最大 128px (约 6 行)
+      textarea.style.height = `${newHeight}px`
+    }
+  }, [])
+
+  useEffect(() => {
+    adjustTextareaHeight()
+  }, [input, adjustTextareaHeight])
 
   const clearHistory = () => { send({ type: 'clear_history' }); setMessages([]) }
 
@@ -256,9 +451,17 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef }: ChatP
             placeholder={t('chat.placeholder')}
             rows={1}
             disabled={status !== 'connected'}
-            className="flex-1 bg-transparent text-sm text-nb-text placeholder:text-nb-text-muted outline-none resize-none max-h-32 scrollbar-thin disabled:opacity-50"
-            style={{ minHeight: '1.5rem' }}
+            className="flex-1 bg-transparent text-sm text-nb-text placeholder:text-nb-text-muted outline-none resize-none max-h-32 scrollbar-thin disabled:opacity-50 leading-relaxed"
           />
+          {/* 模型选择器 */}
+          {currentModel && (
+            <ModelSelector
+              currentModel={currentModel}
+              currentProvider={currentProvider}
+              onSelect={handleModelChange}
+              onOpenSettings={onOpenSettings}
+            />
+          )}
           <button onClick={() => sendMessage(undefined)}
             disabled={!input.trim() || isStreaming || status !== 'connected'}
             className="shrink-0 p-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">

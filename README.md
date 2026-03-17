@@ -1,6 +1,8 @@
 <div align="center">
 
-# UrchinAI Browser
+<img src="logo.png" alt="UrchinAI" width="120" />
+
+# UrchinAI
 
 **AI-Powered Desktop Browser with Intelligent Agent**
 
@@ -19,9 +21,9 @@
 
 ## Overview
 
-UrchinAI Browser is an open-source AI-powered desktop browser that integrates a built-in intelligent agent. Unlike traditional browsers, UrchinAI allows you to control web browsing through natural language commands. Simply tell the AI what you want to do, and it will navigate websites, click elements, fill forms, and perform complex automation tasks for you.
+UrchinAI is an open-source AI-powered desktop browser that integrates a built-in intelligent agent. Unlike traditional browsers, UrchinAI allows you to control web browsing through natural language commands. Simply tell the AI what you want to do, and it will navigate websites, click elements, fill forms, and perform complex automation tasks for you.
 
-### Why UrchinAI Browser?
+### Why UrchinAI?
 
 - **Natural Language Control**: No need to learn complex automation scripts — just describe what you want
 - **Multi-LLM Support**: Works with OpenAI, Anthropic Claude, Google Gemini, DeepSeek, and 10+ other providers
@@ -63,7 +65,7 @@ UrchinAI Browser is an open-source AI-powered desktop browser that integrates a 
 <div align="center">
 
 ### Main Interface
-<img src="docs/screenshots/screenshot-main.png" alt="UrchinAI Browser main interface showing AI chat panel and web content" width="800"/>
+<img src="docs/screenshots/screenshot-main.png" alt="UrchinAI main interface showing AI chat panel and web content" width="800"/>
 
 ### Settings Panel
 <img src="docs/screenshots/screenshot-settings.png" alt="Settings panel with AI provider configuration" width="500"/>
@@ -74,7 +76,7 @@ UrchinAI Browser is an open-source AI-powered desktop browser that integrates a 
 
 ## Supported AI Providers
 
-UrchinAI Browser supports a wide range of LLM providers through LiteLLM:
+UrchinAI supports a wide range of LLM providers through LiteLLM:
 
 | Provider | Models | API Key Required |
 |----------|--------|------------------|
@@ -209,7 +211,7 @@ urchinai-browser/
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    UrchinAI Browser                          │
+│                    UrchinAI                          │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
 │  │   React UI  │◄──►│  Electron   │◄──►│  BrowserView│     │
@@ -319,7 +321,7 @@ Only your AI prompts are sent to your configured LLM provider. All browsing data
 
 ### Can I use this without an AI provider?
 
-Yes! UrchinAI Browser works as a regular browser even without AI configuration. The AI features are optional.
+Yes! UrchinAI works as a regular browser even without AI configuration. The AI features are optional.
 
 ---
 

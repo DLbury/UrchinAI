@@ -12,6 +12,16 @@ Endpoints:
 """
 from __future__ import annotations
 
+import os
+import sys
+
+# PyInstaller 打包环境配置
+if getattr(sys, 'frozen', False):
+    os.environ['LITELLM_LOCAL_MODEL_COST_MAP'] = 'True'
+    os.environ['LITELLM_DONT_SHOW_FEEDBACK_BOX'] = 'True'
+    if hasattr(sys, '_MEIPASS') and sys._MEIPASS not in sys.path:
+        sys.path.insert(0, sys._MEIPASS)
+
 import json
 import logging
 
@@ -61,6 +71,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.error("Failed to accept WebSocket: %s", e)
         return
 
+    # 诊断：在 ws handler 里直接测试 litellm 导入
+    try:
+        import litellm
+        logger.info("[diag] litellm OK: %s", litellm.__file__)
+    except ImportError as e:
+        logger.error("[diag] litellm ImportError at ws handler: %s", e)
+    except Exception as e:
+        logger.error("[diag] litellm FAIL at ws handler: %s: %s", type(e).__name__, e, exc_info=True)
+
     try:
         from agent.manager import get_or_create_manager
         manager = get_or_create_manager(session_id)
@@ -109,5 +128,15 @@ async def health():
 
 # Entry point for PyInstaller / bundled executable
 if __name__ == "__main__":
+    # 启动时诊断 litellm 加载状态
+    logger.info("=== DIAGNOSTIC: Testing litellm import ===")
+    try:
+        import litellm
+        logger.info("=== DIAGNOSTIC: litellm loaded OK, file=%s ===", litellm.__file__)
+    except ImportError as e:
+        logger.error("=== DIAGNOSTIC: litellm ImportError: %s ===", e)
+    except Exception as e:
+        logger.error("=== DIAGNOSTIC: litellm failed: %s: %s ===", type(e).__name__, e, exc_info=True)
+
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)

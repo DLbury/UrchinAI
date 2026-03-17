@@ -1,4 +1,4 @@
-# UrchinAI 浏览器 — 打包说明
+# UrchinAI — 打包说明
 
 ## GitHub Actions 在线构建
 
@@ -55,8 +55,8 @@ npm run dist:win
 流程：`npm run build` → `build:backend:win`（PyInstaller 生成 `backend/urchinai-backend.exe`）→ electron-builder 打包。
 
 产物：
-- `release/UrchinAI 浏览器 Setup 0.1.0.exe`（安装包）
-- `release/UrchinAI 浏览器 0.1.0.exe`（便携版）
+- `release/UrchinAI Setup 0.1.0.exe`（安装包）
+- `release/UrchinAI 0.1.0.exe`（便携版）
 
 **依赖**：本机需安装 Python 3.8+ 和 `pip install -r backend/requirements.txt` 以及 `pip install pyinstaller`，仅用于**构建**；最终用户无需安装 Python。
 
@@ -94,7 +94,7 @@ npm run dist
 ```
 release/
 ├── urchin-electron_0.1.0_amd64.deb   # Linux deb 包
-├── UrchinAI 浏览器 Setup 0.1.0.exe     # Windows 安装包
-├── UrchinAI 浏览器 0.1.0.exe           # Windows 便携版
+├── UrchinAI Setup 0.1.0.exe     # Windows 安装包
+├── UrchinAI 0.1.0.exe           # Windows 便携版
 └── linux-unpacked/                    # Linux 解压目录
 ```

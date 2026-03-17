@@ -329,14 +329,23 @@ class AgentManager:
         self.session_id = session_id
         self.browser_page = browser_page  # kept for API compat, unused in Electron
         self._history: list[dict] = []
+        self._litellm_error: str | None = None  # 记录 litellm 加载失败原因
         self._nanobot_available = self._check_nanobot()
 
     def _check_nanobot(self) -> bool:
+        """Check if litellm is available. Captures all exceptions for diagnosis."""
         try:
             import litellm  # noqa: F401
+            logger.info("litellm loaded OK: %s", litellm.__file__)
             return True
-        except ImportError:
-            logger.warning("litellm not installed; running in fallback mode")
+        except ImportError as e:
+            self._litellm_error = str(e)
+            logger.error("litellm ImportError: %s", e)
+            return False
+        except Exception as e:
+            # PyInstaller 环境下可能抛出非 ImportError 的异常
+            self._litellm_error = f"{type(e).__name__}: {e}"
+            logger.error("litellm failed to load: %s: %s", type(e).__name__, e, exc_info=True)
             return False
 
     async def chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
@@ -478,7 +487,7 @@ class AgentManager:
                         args = {}
 
                     yield AgentMessage("tool_call", tool_name,
-                                       args=args, call_id=call_id)
+                                       args=args, call_id=call_id, name=tool_name)
 
                     # Execute
                     if browser_tools_obj and hasattr(browser_tools_obj, tool_name):
@@ -526,10 +535,11 @@ class AgentManager:
 
     async def _fallback_chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
         """Simple fallback when litellm is not available."""
+        error_detail = f"\n\n错误详情：{self._litellm_error}" if self._litellm_error else ""
         reply = (
-            "[litellm 未安装，无法调用大模型]\n\n"
+            "[litellm 未安装或加载失败，无法调用大模型]\n\n"
             f"你说：{user_message}\n\n"
-            "请安装 litellm 并配置 ~/.nanobot/config.json 启用 AI 回复。"
+            f"请安装 litellm 并配置 ~/.nanobot/config.json 启用 AI 回复。{error_detail}"
         )
         for word in reply.split(" "):
             yield AgentMessage("token", word + " ")

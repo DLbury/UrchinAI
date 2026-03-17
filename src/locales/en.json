@@ -44,6 +44,9 @@
     "empty": "Send a message to start chatting with the agent",
     "emptyHint": "The agent can control the browser on the left",
     "clearHistory": "Clear chat",
+    "switchModel": "Switch model",
+    "noModelsConfigured": "No preset models for current provider",
+    "configureModels": "Configure models & providers...",
     "status": {
       "connecting": "Connecting",
       "connected": "Connected",

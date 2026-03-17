@@ -460,11 +460,16 @@ export default function App() {
       else url = `https://www.google.com/search?q=${encodeURIComponent(url)}`
     }
     setUrlInput(url)
-    // Update tab.src so the webview navigates even before dom-ready (fixes new-tab quick-access)
-    setTabs(prev => prev.map(t => t.id === activeIdRef.current ? { ...t, src: url, url } : t))
-    // Also direct loadURL for already-loaded webviews (avoids flicker)
+    // Update tab state (url for address bar display)
+    setTabs(prev => prev.map(t => t.id === activeIdRef.current ? { ...t, url } : t))
+    // Use loadURL directly - don't update src as it would trigger a second navigation
     const wv = webviewsRef.current.get(activeIdRef.current)
-    wv?.loadURL(url).catch(() => {})
+    if (wv) {
+      wv.loadURL(url).catch(() => {})
+    } else {
+      // If webview not ready yet, update src so it loads when mounted
+      setTabs(prev => prev.map(t => t.id === activeIdRef.current ? { ...t, src: url } : t))
+    }
   }, [])
 
   // ── Reorder tabs (drag-to-sort within tab bar) ───────────────────────────
@@ -736,7 +741,7 @@ export default function App() {
           className="flex flex-col border-l border-nb-border bg-nb-base shrink-0 overflow-hidden transition-all duration-200 ease-in-out"
           style={{ width: chatOpen ? 420 : 0 }}
         >
-          <ChatPanel sessionId={SESSION_ID} onAgentNavigate={handleAgentNavigate} sendRef={chatSendRef} />
+          <ChatPanel sessionId={SESSION_ID} onAgentNavigate={handleAgentNavigate} sendRef={chatSendRef} onOpenSettings={openSettings} />
         </div>
       </div>
 
