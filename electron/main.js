@@ -1072,8 +1072,6 @@ function createWindow() {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadURL('app://./dist/index.html')
-    // Open DevTools in production for debugging WebSocket issues
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
   }
 
   mainWindow.on('closed', () => { mainWindow = null })
