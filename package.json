@@ -1,6 +1,6 @@
 {
   "name": "urchin-electron",
-  "version": "0.3.1",
+  "version": "0.3.4",
   "description": "UrchinAI — Electron",
   "main": "electron/main.js",
   "type": "module",
@@ -58,7 +58,7 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icons/win/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -76,6 +76,7 @@
       "category": "Network",
       "maintainer": "UrchinAI",
       "executableName": "urchinai-browser",
+      "icon": "build/icons",
       "desktop": {
         "Name": "UrchinAI",
         "Comment": "AI-powered smart desktop browser",
@@ -126,6 +127,7 @@
     "concurrently": "^9.0.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
+    "electron-icon-builder": "^2.0.1",
     "postcss": "^8.4.47",
     "sharp": "^0.34.5",
     "tailwindcss": "^3.4.14",

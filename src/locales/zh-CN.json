@@ -29,7 +29,8 @@
   },
   "bookmarks": {
     "title": "书签",
-    "empty": "暂无书签"
+    "empty": "暂无书签",
+    "changeCategory": "切换分类"
   },
   "sessions": {
     "title": "会话管理",
@@ -72,6 +73,7 @@
     "skills": "技能管理",
     "mcp": "MCP 服务器",
     "memory": "AI 记忆",
+    "categories": "书签分类",
     "appearance": "外观与动效",
     "currentModel": "当前使用的模型",
     "provider": "服务商",
@@ -98,6 +100,12 @@
     "memoryPlaceholder": "输入要记住的事项，例如：我喜欢简洁的回答",
     "noMemory": "暂无记忆事项",
     "clearMemory": "清空所有记忆",
+    "categoriesDesc": "书签添加时会自动通过 AI 进行智能分类。预设分类不可修改，但可以添加自定义分类。",
+    "presetCategories": "预设分类",
+    "customCategories": "自定义分类",
+    "noCustomCategories": "暂无自定义分类",
+    "categoryNamePlaceholder": "分类名称",
+    "deleteCategoryConfirm": "确定要删除这个分类吗？",
     "theme": "界面主题",
     "themeDesc": "切换亮色 / 暗色界面风格，设置会自动保存。",
     "day": "白天",

@@ -3,7 +3,7 @@ import {
   Settings, RefreshCw, ChevronLeft, ChevronRight, Globe,
   Plus, X, Loader2, PanelRightClose, PanelRightOpen,
   Bookmark, BookmarkCheck, Clock, BookOpen, Sparkles, Trash2, Search,
-  FolderOpen, Shield, ShieldOff,
+  FolderOpen, Shield, ShieldOff, Minus, Maximize2,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from './hooks/useTheme'
@@ -12,14 +12,15 @@ import ChatPanel from './components/ChatPanel'
 import SettingsModal from './components/SettingsModal'
 import NewTabPage from './components/NewTabPage'
 import {
-  listBookmarks, addBookmark, removeBookmark,
-  listHistory, addHistory, clearHistory,
+  listBookmarks, addBookmark, removeBookmark, updateBookmarkCategory,
+  listHistory, addHistory, clearHistory, listCategories,
 } from './api/client'
 import { getPageContent } from './api/bridge'
 
 // ── Electron IPC bridge ──────────────────────────────────────────────────────
 type ElectronAPI = {
   isElectron: boolean
+  platform?: 'darwin' | 'win32' | 'linux'
   setActiveWebview:    (id: number)   => Promise<void>
   updateTabState:      (s: unknown)   => Promise<void>
   onCmdNewTab:         (cb: (url: string) => void) => () => void
@@ -38,6 +39,11 @@ type ElectronAPI = {
   setFXEnabled:        (enabled: boolean) => Promise<void>
   showContextMenu:     (params: Record<string, unknown>) => Promise<void>
   detachTab:           (url: string, screenX: number, screenY: number, theme?: string) => Promise<boolean>
+  // Window controls (frameless mode)
+  windowMinimize:      () => Promise<void>
+  windowMaximize:      () => Promise<void>
+  windowClose:         () => Promise<void>
+  windowIsMaximized:   () => Promise<boolean>
 }
 const eAPI: ElectronAPI | undefined = (window as any).electronAPI
 
@@ -50,7 +56,7 @@ interface TabState {
   isLoading: boolean
   favicon:   string | null
 }
-interface BookmarkItem { url: string; title: string; favicon: string; createdAt: number }
+interface BookmarkItem { url: string; title: string; favicon: string; category?: string; createdAt: number }
 interface HistoryItem  { url: string; title: string; favicon: string; visitedAt: number }
 interface SessionItem  { id: string; name: string; createdAt: number; tabs: {url:string;title:string}[] }
 
@@ -117,9 +123,14 @@ function TabBar({
 
   return (
     <div
-      className="flex items-end gap-0 overflow-x-auto scrollbar-none bg-nb-deepest shrink-0 pl-20"
+      className="flex items-end gap-0 overflow-x-auto scrollbar-none bg-nb-deepest shrink-0"
       style={{ height: TAB_BAR_HEIGHT, WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
+      {/* Logo / App name - drag area */}
+      <div className="flex items-center gap-1.5 px-3 h-full text-nb-text-dim shrink-0">
+        <Sparkles size={14} className="text-brand-400" />
+        <span className="text-xs font-medium">UrchinAI</span>
+      </div>
       {tabs.map(tab => {
         const isActive  = tab.id === activeId
         const isDropTarget = dragOverId === tab.id
@@ -161,6 +172,29 @@ function TabBar({
         <Plus size={14} />
       </button>
       <div className="flex-1" />
+      {/* Window controls (Windows/Linux only, macOS uses native traffic lights) */}
+      {eAPI && eAPI.platform !== 'darwin' && (
+        <div className="flex items-center h-full shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <button
+            onClick={() => eAPI.windowMinimize()}
+            className="w-11 h-full flex items-center justify-center hover:bg-nb-hover transition-colors"
+          >
+            <Minus size={14} className="text-nb-text-dim" />
+          </button>
+          <button
+            onClick={async () => eAPI.windowMaximize()}
+            className="w-11 h-full flex items-center justify-center hover:bg-nb-hover transition-colors"
+          >
+            <Maximize2 size={12} className="text-nb-text-dim" />
+          </button>
+          <button
+            onClick={() => eAPI.windowClose()}
+            className="w-11 h-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors"
+          >
+            <X size={14} className="text-nb-text-dim" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -232,29 +266,207 @@ function HistoryPanel({ items, onNavigate, onClear, onClose, t }: {
 }
 
 // ── BookmarksPanel ────────────────────────────────────────────────────────────
-function BookmarksPanel({ items, onNavigate, onRemove, onClose, t }: {
-  items: BookmarkItem[]; onNavigate:(u:string)=>void; onRemove:(u:string)=>void; onClose:()=>void
+
+interface CategoryInfo { id: string; name: string; name_en: string; icon: string }
+
+function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange, t, i18n }: {
+  items: BookmarkItem[]
+  onNavigate: (u: string) => void
+  onRemove: (u: string) => void
+  onCategoryChange: (url: string, category: string) => void
+  onClose: () => void
   t: (key: string) => string
+  i18n: { language: string }
 }) {
+  const [categories, setCategories] = useState<CategoryInfo[]>([])
+  const [filter, setFilter] = useState<string>('all')
+
+  useEffect(() => {
+    listCategories().then(setCategories).catch(() => {})
+  }, [])
+
+  // Fallback categorization for items without category
+  const fallbackCategorize = (url: string): string => {
+    try {
+      const host = new URL(url).hostname.toLowerCase()
+      const patterns: [string, RegExp][] = [
+        ["entertainment", /youtube|bilibili|netflix|iqiyi|youku|vimeo|twitch|douyin/],
+        ["social", /twitter|x\.com|facebook|instagram|weibo|linkedin|tiktok|discord/],
+        ["shopping", /amazon|taobao|jd\.com|tmall|pinduoduo|ebay|aliexpress|shopify/],
+        ["tools", /github|gitlab|stackoverflow|npmjs|pypi|vercel|railway|cloudflare|docker|google|baidu|bing/],
+        ["news", /news|bbc|cnn|xinhua|sina\.com|sohu|people\.com|reuters|theguardian/],
+        ["ai", /openai|chatgpt|claude|gemini|deepseek|huggingface|cohere|midjourney/],
+        ["finance", /bank|alipay|paypal|finance|trading|invest|stock|fund|crypto/],
+      ]
+      for (const [cat, pattern] of patterns) {
+        if (pattern.test(host)) return cat
+      }
+    } catch {}
+    return "other"
+  }
+
+  // Get category display info
+  const getCategoryInfo = (catId: string): CategoryInfo | undefined => categories.find(c => c.id === catId)
+  const getCategoryName = (catId: string): string => {
+    const cat = getCategoryInfo(catId)
+    return cat ? (i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)) : catId
+  }
+
+  // Group items by category (using fallback for empty categories)
+  const groupedItems = items.reduce<Record<string, BookmarkItem[]>>((acc, bm) => {
+    const cat = bm.category || fallbackCategorize(bm.url)
+    if (!acc[cat]) acc[cat] = []
+    acc[cat].push(bm)
+    return acc
+  }, {})
+
+  // Filter items
+  const displayItems = filter === 'all' ? null : (groupedItems[filter] || [])
+
   return (
-    <div className="absolute right-0 top-full mt-1 w-80 max-h-[70vh] bg-nb-base border border-nb-border rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden">
+    <div className="absolute right-0 top-full mt-1 w-96 max-h-[70vh] bg-nb-base border border-nb-border rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-nb-border shrink-0">
-        <span className="text-sm font-semibold text-nb-text flex items-center gap-2"><Bookmark size={14} className="text-brand-400" /> {t('bookmarks.title')}</span>
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-nb-raised text-nb-text-dim hover:text-nb-text-soft transition-colors"><X size={13} /></button>
+        <span className="text-sm font-semibold text-nb-text flex items-center gap-2">
+          <Bookmark size={14} className="text-brand-400" /> {t('bookmarks.title')}
+        </span>
+        <button onClick={onClose} className="p-1.5 rounded hover:bg-nb-raised text-nb-text-dim hover:text-nb-text-soft transition-colors">
+          <X size={13} />
+        </button>
       </div>
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {items.length===0 ? <div className="flex flex-col items-center justify-center py-10 text-nb-text-muted"><Bookmark size={28} className="opacity-30 mb-2" /><p className="text-xs">{t('bookmarks.empty')}</p></div>
-          : items.map((bm,i)=>(
-            <div key={i} className="flex items-center gap-2 px-4 py-2.5 hover:bg-nb-card transition-colors group">
-              {bm.favicon ? <img src={bm.favicon} className="w-4 h-4 shrink-0 object-contain" alt="" /> : <Globe size={14} className="text-nb-text-muted shrink-0" />}
-              <button onClick={()=>{onNavigate(bm.url);onClose()}} className="flex-1 min-w-0 text-left">
-                <p className="text-xs text-nb-text-soft truncate group-hover:text-nb-text">{bm.title||bm.url}</p>
-                <p className="text-[10px] text-nb-text-muted truncate">{bm.url}</p>
+
+      {/* Category filter */}
+      <div className="px-3 py-2 border-b border-nb-border shrink-0 overflow-x-auto scrollbar-thin">
+        <div className="flex gap-1.5 flex-nowrap">
+          <button
+            onClick={() => setFilter('all')}
+            className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+              filter === 'all' ? 'bg-brand-600 text-white' : 'bg-nb-card text-nb-text-dim hover:text-nb-text'
+            }`}
+          >
+            {t('settings.categories')} ({items.length})
+          </button>
+          {Object.entries(groupedItems).map(([catId, catItems]) => {
+            const catInfo = getCategoryInfo(catId)
+            return (
+              <button
+                key={catId}
+                onClick={() => setFilter(catId)}
+                className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  filter === catId ? 'bg-brand-600 text-white' : 'bg-nb-card text-nb-text-dim hover:text-nb-text'
+                }`}
+              >
+                {catInfo?.icon || '📌'} {getCategoryName(catId)} ({catItems.length})
               </button>
-              <button onClick={()=>onRemove(bm.url)} className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-red-600 dark:hover:text-red-400 transition-colors"><X size={11} /></button>
-            </div>
-          ))}
+            )
+          })}
+        </div>
       </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 text-nb-text-muted">
+            <Bookmark size={28} className="opacity-30 mb-2" />
+            <p className="text-xs">{t('bookmarks.empty')}</p>
+          </div>
+        ) : filter === 'all' ? (
+          // Show grouped by category
+          Object.entries(groupedItems).map(([catId, catItems]) => {
+            const catInfo = getCategoryInfo(catId)
+            return (
+              <div key={catId}>
+                <div className="px-4 py-1.5 bg-nb-raised/50 text-xs font-medium text-nb-text-muted sticky top-0">
+                  {catInfo?.icon || '📌'} {getCategoryName(catId)}
+                </div>
+                {catItems.map((bm, i) => (
+                  <BookmarkItemRow
+                    key={i}
+                    bm={bm}
+                    categories={categories}
+                    onNavigate={onNavigate}
+                    onRemove={onRemove}
+                    onCategoryChange={onCategoryChange}
+                    onClose={onClose}
+                    i18n={i18n}
+                  />
+                ))}
+              </div>
+            )
+          })
+        ) : (
+          // Show filtered items
+          displayItems?.map((bm, i) => (
+            <BookmarkItemRow
+              key={i}
+              bm={bm}
+              categories={categories}
+              onNavigate={onNavigate}
+              onRemove={onRemove}
+              onCategoryChange={onCategoryChange}
+              onClose={onClose}
+              i18n={i18n}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChange, onClose, i18n }: {
+  bm: BookmarkItem
+  categories: CategoryInfo[]
+  onNavigate: (u: string) => void
+  onRemove: (u: string) => void
+  onCategoryChange: (url: string, category: string) => void
+  onClose: () => void
+  i18n: { language: string }
+}) {
+  const [showCatSelect, setShowCatSelect] = useState(false)
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-nb-card transition-colors group">
+      {bm.favicon ? (
+        <img src={bm.favicon} className="w-4 h-4 shrink-0 object-contain" alt="" />
+      ) : (
+        <Globe size={14} className="text-nb-text-muted shrink-0" />
+      )}
+      <button onClick={() => { onNavigate(bm.url); onClose() }} className="flex-1 min-w-0 text-left">
+        <p className="text-xs text-nb-text-soft truncate group-hover:text-nb-text">{bm.title || bm.url}</p>
+        <p className="text-[10px] text-nb-text-muted truncate">{bm.url}</p>
+      </button>
+
+      {/* Category selector */}
+      <div className="relative shrink-0">
+        <button
+          onClick={() => setShowCatSelect(!showCatSelect)}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-nb-raised text-nb-text-dim hover:text-nb-text-soft transition-colors"
+          title="Change category"
+        >
+          {categories.find(c => c.id === bm.category)?.icon || '📌'}
+        </button>
+        {showCatSelect && (
+          <div className="absolute right-0 top-full mt-1 w-36 bg-nb-base border border-nb-border rounded-lg shadow-xl z-50 py-1 max-h-48 overflow-y-auto">
+            {categories.map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => { onCategoryChange(bm.url, cat.id); setShowCatSelect(false) }}
+                className={`w-full px-2 py-1.5 text-left text-xs hover:bg-nb-card transition-colors flex items-center gap-1.5 ${
+                  bm.category === cat.id ? 'text-brand-500 font-medium' : 'text-nb-text-soft'
+                }`}
+              >
+                {cat.icon} {i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={() => onRemove(bm.url)}
+        className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-red-600 dark:hover:text-red-400 transition-colors"
+      >
+        <X size={11} />
+      </button>
     </div>
   )
 }
@@ -304,7 +516,7 @@ function SessionsPanel({ sessions, onSave, onRestore, onDelete, onClose, t }: {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   useTheme()
 
   // ── Tabs (managed entirely in React, no IPC for basic ops) ──────────────
@@ -319,6 +531,8 @@ export default function App() {
   const [urlInput, setUrlInput]         = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [chatOpen, setChatOpen]         = useState(true)
+  const [chatWidth, setChatWidth]       = useState(420)  // 可调整的面板宽度
+  const [isResizing, setIsResizing]     = useState(false)
   const [historyOpen, setHistoryOpen]   = useState(false)
   const [bookmarksOpen, setBookmarksOpen] = useState(false)
   const [sessionsOpen, setSessionsOpen] = useState(false)
@@ -560,8 +774,14 @@ export default function App() {
       await removeBookmark(currentUrl).catch(() => {})
       setBookmarks(prev => prev.filter(b => b.url !== currentUrl))
     } else {
-      await addBookmark(currentUrl, activeTab?.title ?? '', activeTab?.favicon ?? '').catch(() => {})
-      setBookmarks(prev => [...prev, { url: currentUrl, title: activeTab?.title ?? '', favicon: activeTab?.favicon ?? '', createdAt: Date.now()/1000 }])
+      const result = await addBookmark(currentUrl, activeTab?.title ?? '', activeTab?.favicon ?? '').catch(() => null)
+      // Use category from backend response, or reload bookmarks to get the category
+      if (result?.category) {
+        setBookmarks(prev => [...prev, { url: currentUrl, title: activeTab?.title ?? '', favicon: activeTab?.favicon ?? '', category: result.category, createdAt: Date.now()/1000 }])
+      } else {
+        // Fallback: reload bookmarks to ensure consistency
+        listBookmarks().then(setBookmarks).catch(() => {})
+      }
     }
   }
 
@@ -605,6 +825,29 @@ export default function App() {
 
   const handleClearHistory = async () => { await clearHistory().catch(() => {}); setHistory([]) }
   const handleAgentNavigate = useCallback((url: string) => navigate(url), [navigate])
+
+  // ── Chat panel resize ─────────────────────────────────────────────────────
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+    const startX = e.clientX
+    const startWidth = chatWidth
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = startX - moveEvent.clientX  // 向左拖拽增大宽度
+      const newWidth = Math.min(600, Math.max(320, startWidth + delta))
+      setChatWidth(newWidth)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [chatWidth])
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-nb-deepest select-none">
@@ -674,8 +917,9 @@ export default function App() {
               className={`p-1.5 rounded transition-colors ${bookmarksOpen ? 'text-brand-400 bg-nb-raised' : 'text-nb-text-dim hover:text-nb-text-soft hover:bg-nb-raised'}`}>
               <Bookmark size={15} />
             </button>
-            {bookmarksOpen && <BookmarksPanel items={bookmarks} t={t} onNavigate={navigate}
+            {bookmarksOpen && <BookmarksPanel items={bookmarks} t={t} i18n={i18n} onNavigate={navigate}
               onRemove={url => { removeBookmark(url).catch(()=>{}); setBookmarks(prev=>prev.filter(b=>b.url!==url)) }}
+              onCategoryChange={(url, cat) => { updateBookmarkCategory(url, cat).catch(()=>{}); setBookmarks(prev=>prev.map(b=>b.url===url?{...b,category:cat}:b)) }}
               onClose={closeBookmarks} />}
           </div>
 
@@ -742,9 +986,19 @@ export default function App() {
 
         {/* Chat panel — right side */}
         <div
-          className="flex flex-col border-l border-nb-border bg-nb-base shrink-0 overflow-hidden transition-all duration-200 ease-in-out"
-          style={{ width: chatOpen ? 420 : 0 }}
+          className={`relative flex flex-col border-l border-nb-border bg-nb-base shrink-0 overflow-hidden ${isResizing ? '' : 'transition-all duration-200 ease-in-out'}`}
+          style={{ width: chatOpen ? chatWidth : 0 }}
         >
+          {/* Resize handle */}
+          {chatOpen && (
+            <div
+              onMouseDown={handleResizeStart}
+              className={`absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize group z-10 ${
+                isResizing ? 'bg-brand-500' : 'hover:bg-brand-500/50'
+              }`}
+              style={{ marginLeft: -4 }}
+            />
+          )}
           <ChatPanel sessionId={SESSION_ID} onAgentNavigate={handleAgentNavigate} sendRef={chatSendRef} onOpenSettings={openSettings} />
         </div>
       </div>

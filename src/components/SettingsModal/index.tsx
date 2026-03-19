@@ -3,7 +3,7 @@ import {
   X, Settings, Save, Plus, Trash2, Eye, EyeOff,
   Loader2, CheckCircle, Puzzle, Server, Terminal,
   Globe, Edit2, Check, AlertCircle, ExternalLink, BookOpen, Brain, Sparkles,
-  MousePointer2, Sun, Moon, Monitor,
+  MousePointer2, Sun, Moon, Monitor, Bookmark,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../hooks/useTheme'
@@ -12,11 +12,12 @@ import {
   listSkills, installSkill, deleteSkill,
   listMCPServers, addMCPServer, updateMCPServer, deleteMCPServer,
   listMemory, addMemory, deleteMemory, clearMemory,
+  listCategories, addCategory, deleteCategory,
 } from '../../api/client'
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
 
-type Tab = 'model' | 'skills' | 'mcp' | 'memory' | 'appearance'
+type Tab = 'model' | 'skills' | 'mcp' | 'memory' | 'categories' | 'appearance'
 type SaveState = 'idle' | 'saving' | 'saved'
 
 interface ModelItem { label: string; value: string }
@@ -34,6 +35,7 @@ interface MCPServer {
   name: string; type: string; command?: string; args?: string[]
   url?: string; headers?: Record<string, string>; toolTimeout?: number
 }
+interface CategoryInfo { id: string; name: string; name_en: string; icon: string }
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -866,6 +868,138 @@ function MemoryTab() {
   )
 }
 
+// ── Categories Tab ────────────────────────────────────────────────────────────
+
+function CategoriesTab() {
+  const { t, i18n } = useTranslation()
+  const [categories, setCategories] = useState<CategoryInfo[]>([])
+  const [loading, setLoading] = useState(true)
+  const [newName, setNewName] = useState('')
+  const [newIcon, setNewIcon] = useState('📌')
+
+  useEffect(() => {
+    loadCategories()
+  }, [])
+
+  const loadCategories = async () => {
+    setLoading(true)
+    try {
+      const data = await listCategories()
+      setCategories(data)
+    } catch (e) {
+      console.error('Failed to load categories:', e)
+    }
+    setLoading(false)
+  }
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return
+    try {
+      const newCat = await addCategory(newName.trim(), newIcon)
+      setCategories(prev => [...prev, newCat])
+      setNewName('')
+      setNewIcon('📌')
+    } catch (e) {
+      console.error('Failed to add category:', e)
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm(t('settings.deleteCategoryConfirm'))) return
+    try {
+      await deleteCategory(id)
+      setCategories(prev => prev.filter(c => c.id !== id))
+    } catch (e) {
+      console.error('Failed to delete category:', e)
+    }
+  }
+
+  // Separate preset and custom categories
+  const presetCount = 10 // DEFAULT_CATEGORIES count
+  const presetCategories = categories.slice(0, presetCount)
+  const customCategories = categories.slice(presetCount)
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start gap-2.5 p-3.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700/30 rounded-xl text-xs text-blue-700 dark:text-blue-300">
+        <Bookmark size={14} className="shrink-0 mt-0.5" />
+        <span>{t('settings.categoriesDesc')}</span>
+      </div>
+
+      {/* Add new category */}
+      <div className="flex gap-2">
+        <input
+          value={newIcon}
+          onChange={e => setNewIcon(e.target.value)}
+          placeholder="图标"
+          className="w-16 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft text-center outline-none focus:border-brand-500"
+        />
+        <input
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleAdd() }}
+          placeholder={t('settings.categoryNamePlaceholder')}
+          className="flex-1 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft placeholder:text-nb-text-muted outline-none focus:border-brand-500"
+        />
+        <button
+          onClick={handleAdd}
+          disabled={!newName.trim()}
+          className="shrink-0 px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-sm text-white transition-colors"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-nb-text-muted" /></div>
+      ) : (
+        <>
+          {/* Preset categories (read-only) */}
+          <div>
+            <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-3">{t('settings.presetCategories')}</h3>
+            <div className="grid grid-cols-2 gap-2">
+              {presetCategories.map(cat => (
+                <div key={cat.id} className="flex items-center gap-2 p-2.5 bg-nb-card rounded-lg">
+                  <span className="text-lg">{cat.icon}</span>
+                  <span className="text-sm text-nb-text-soft">{i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom categories */}
+          {customCategories.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-3">{t('settings.customCategories')}</h3>
+              <div className="space-y-2">
+                {customCategories.map(cat => (
+                  <div key={cat.id} className="flex items-center gap-2 p-3 bg-nb-card rounded-lg group">
+                    <span className="text-lg">{cat.icon}</span>
+                    <span className="flex-1 text-sm text-nb-text-soft">{i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)}</span>
+                    <button
+                      onClick={() => handleDelete(cat.id)}
+                      className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {customCategories.length === 0 && (
+            <div className="text-center py-6 text-nb-text-muted">
+              <Bookmark size={28} className="mx-auto mb-2 opacity-30" />
+              <p className="text-sm">{t('settings.noCustomCategories')}</p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── 弹窗主体 ──────────────────────────────────────────────────────────────────
 
 interface SettingsModalProps {
@@ -1050,6 +1184,7 @@ const TABS: { id: Tab; labelKey: string; icon: React.ReactNode }[] = [
   { id: 'skills',     labelKey: 'settings.skills',     icon: <Puzzle size={15} /> },
   { id: 'mcp',        labelKey: 'settings.mcp',        icon: <Server size={15} /> },
   { id: 'memory',     labelKey: 'settings.memory',     icon: <Brain size={15} /> },
+  { id: 'categories', labelKey: 'settings.categories', icon: <Bookmark size={15} /> },
   { id: 'appearance', labelKey: 'settings.appearance', icon: <Sparkles size={15} /> },
 ]
 
@@ -1108,6 +1243,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
             {tab === 'skills'     && <SkillsTab />}
             {tab === 'mcp'        && <MCPTab />}
             {tab === 'memory'     && <MemoryTab />}
+            {tab === 'categories' && <CategoriesTab />}
             {tab === 'appearance' && <AppearanceTab />}
           </div>
         </div>

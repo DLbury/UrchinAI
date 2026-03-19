@@ -1,28 +1,33 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search, Clock, Globe, X } from 'lucide-react'
+import { listCategories } from '../../api/client'
 
-// ── Auto-categorization ───────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-const CATEGORY_RULES: { name: string; icon: string; pattern: RegExp }[] = [
-  { name: '搜索引擎', icon: '🔍', pattern: /google|baidu|bing|duckduckgo|sogou|yahoo|brave/ },
-  { name: '视频娱乐', icon: '🎬', pattern: /youtube|bilibili|netflix|iqiyi|youku|vimeo|twitch|douyin/ },
-  { name: '社交媒体', icon: '💬', pattern: /twitter|x\.com|facebook|instagram|weibo|linkedin|tiktok|discord/ },
-  { name: '购物',     icon: '🛒', pattern: /amazon|taobao|jd\.com|tmall|pinduoduo|ebay|aliexpress|shopify/ },
-  { name: '开发工具', icon: '💻', pattern: /github|gitlab|stackoverflow|npmjs|pypi|vercel|railway|cloudflare|docker/ },
-  { name: '新闻资讯', icon: '📰', pattern: /news|bbc|cnn|xinhua|sina\.com|sohu|people\.com|reuters|theguardian/ },
-  { name: 'AI 工具',  icon: '🤖', pattern: /openai|chatgpt|claude|gemini|deepseek|huggingface|cohere|midjourney/ },
-  { name: '金融理财', icon: '💰', pattern: /bank|alipay|paypal|finance|trading|invest|stock|fund|crypto/ },
+interface CategoryInfo { id: string; name: string; name_en: string; icon: string }
+
+// ── Auto-categorization (fallback when no category field) ──────────────────────
+
+const CATEGORY_RULES: { id: string; pattern: RegExp }[] = [
+  { id: "search", pattern: /google|baidu|bing|duckduckgo|sogou|yahoo|brave/ },
+  { id: "entertainment", pattern: /youtube|bilibili|netflix|iqiyi|youku|vimeo|twitch|douyin/ },
+  { id: "social", pattern: /twitter|x\.com|facebook|instagram|weibo|linkedin|tiktok|discord/ },
+  { id: "shopping", pattern: /amazon|taobao|jd\.com|tmall|pinduoduo|ebay|aliexpress|shopify/ },
+  { id: "tools", pattern: /github|gitlab|stackoverflow|npmjs|pypi|vercel|railway|cloudflare|docker/ },
+  { id: "news", pattern: /news|bbc|cnn|xinhua|sina\.com|sohu|people\.com|reuters|theguardian/ },
+  { id: "ai", pattern: /openai|chatgpt|claude|gemini|deepseek|huggingface|cohere|midjourney/ },
+  { id: "finance", pattern: /bank|alipay|paypal|finance|trading|invest|stock|fund|crypto/ },
 ]
 
-function categorize(url: string): string {
+function fallbackCategorize(url: string): string {
   try {
     const host = new URL(url).hostname.toLowerCase()
     for (const rule of CATEGORY_RULES) {
-      if (rule.pattern.test(host)) return rule.name
+      if (rule.pattern.test(host)) return rule.id
     }
   } catch (_) {}
-  return '其他'
+  return "other"
 }
 
 // ── Default quick links ───────────────────────────────────────────────────────
@@ -40,7 +45,7 @@ const DEFAULT_LINKS = [
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface BookmarkItem { url: string; title: string; favicon: string; createdAt: number }
+interface BookmarkItem { url: string; title: string; favicon: string; category?: string; createdAt: number }
 interface HistoryItem  { url: string; title: string; favicon: string; visitedAt: number }
 
 interface Props {
@@ -123,8 +128,14 @@ function QuickCard({ title, url, favicon, emoji, onNavigate, onRemove }: {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [search, setSearch] = useState('')
+  const [categories, setCategories] = useState<CategoryInfo[]>([])
+
+  // Load categories from backend
+  useEffect(() => {
+    listCategories().then(setCategories).catch(() => {})
+  }, [])
 
   const handleSearch = () => {
     const q = search.trim()
@@ -134,13 +145,31 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     else onNavigate(`https://www.google.com/search?q=${encodeURIComponent(q)}`)
   }
 
+  // Build a lookup map for categories
+  const categoryMap = new Map(categories.map(c => [c.id, c]))
+
+  // Determine display name for category (based on locale)
+  const getCategoryDisplayName = (catId: string): string => {
+    const cat = categoryMap.get(catId)
+    if (!cat) return catId
+    return i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)
+  }
+
+  // Get category icon
+  const getCategoryIcon = (catId: string): string => {
+    const cat = categoryMap.get(catId)
+    return cat?.icon || '📌'
+  }
+
   // If user has bookmarks → group ALL of them by category for the main grid.
   // If no bookmarks yet → fall back to default links.
   const hasBookmarks = bookmarks.length > 0
 
+  // Group bookmarks by category, using fallback for bookmarks without category
   const grouped = hasBookmarks
     ? bookmarks.reduce<Record<string, BookmarkItem[]>>((acc, bm) => {
-        const cat = categorize(bm.url)
+        // Use bookmark's category field, or fallback to URL pattern matching
+        const cat = bm.category || fallbackCategorize(bm.url)
         if (!acc[cat]) acc[cat] = []
         acc[cat].push(bm)
         return acc
@@ -189,13 +218,14 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
         {/* ── Bookmarks (primary content) ────────────────────────────────── */}
         {hasBookmarks ? (
           <div className="w-full max-w-2xl space-y-7">
-            {Object.entries(grouped).map(([cat, items]) => {
-              const rule = CATEGORY_RULES.find(r => r.name === cat)
+            {Object.entries(grouped).map(([catId, items]) => {
+              const catName = getCategoryDisplayName(catId)
+              const catIcon = getCategoryIcon(catId)
               return (
-                <div key={cat}>
+                <div key={catId}>
                   <h2 className="text-xs font-semibold text-nb-text-muted uppercase tracking-widest mb-4 flex items-center gap-1.5">
-                    {rule?.icon && <span>{rule.icon}</span>}
-                    <span>{cat}</span>
+                    <span>{catIcon}</span>
+                    <span>{catName}</span>
                   </h2>
                   <div className="grid grid-cols-6 gap-x-4 gap-y-5 justify-items-center">
                     {items.map((bm, i) => (

@@ -35,6 +35,7 @@ from api.bookmarks import router as bookmarks_router
 from api.history import router as history_router
 from api.memory import router as memory_router
 from api.scripts import router as scripts_router
+from api.category import router as category_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ app.include_router(bookmarks_router)
 app.include_router(history_router)
 app.include_router(memory_router)
 app.include_router(scripts_router)
+app.include_router(category_router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -74,11 +74,15 @@ export const deleteMCPServer = (name: string) =>
 
 // Bookmarks
 export const listBookmarks = () =>
-  request<Array<{ url: string; title: string; favicon: string; createdAt: number }>>('/api/bookmarks')
-export const addBookmark = (url: string, title: string, favicon?: string) =>
-  request('/api/bookmarks', { method: 'POST', body: JSON.stringify({ url, title, favicon: favicon ?? '' }) })
+  request<Array<{ url: string; title: string; favicon: string; category?: string; createdAt: number }>>('/api/bookmarks')
+export const addBookmark = (url: string, title: string, favicon?: string, category?: string) =>
+  request<{ ok: boolean; category?: string }>('/api/bookmarks', { method: 'POST', body: JSON.stringify({ url, title, favicon: favicon ?? '', category: category ?? '' }) })
 export const removeBookmark = (url: string) =>
   request('/api/bookmarks?' + new URLSearchParams({ url }), { method: 'DELETE' })
+export const categorizeBookmark = (url: string, title: string) =>
+  request<{ category: string }>('/api/bookmarks/categorize', { method: 'POST', body: JSON.stringify({ url, title: title ?? '' }) })
+export const updateBookmarkCategory = (url: string, category: string) =>
+  request('/api/bookmarks/' + encodeURIComponent(url) + '/category', { method: 'PUT', body: JSON.stringify({ category }) })
 
 // History
 export const listHistory = (limit = 200) =>
@@ -103,3 +107,12 @@ export const createScript = (name: string, prompt: string, icon?: string) =>
 export const updateScript = (id: string, data: { name?: string; prompt?: string; icon?: string }) =>
   request<{ id: string; name: string; prompt: string; icon: string }>(`/api/scripts/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteScript = (id: string) => request(`/api/scripts/${id}`, { method: 'DELETE' })
+
+// Categories
+export const listCategories = () =>
+  request<Array<{ id: string; name: string; name_en: string; icon: string }>>('/api/categories')
+export const addCategory = (name: string, icon?: string, name_en?: string) =>
+  request<{ id: string; name: string; name_en: string; icon: string }>('/api/categories', { method: 'POST', body: JSON.stringify({ name, icon: icon ?? '📌', name_en: name_en ?? '' }) })
+export const updateCategory = (id: string, data: { name?: string; icon?: string; name_en?: string }) =>
+  request<{ id: string; name: string; name_en: string; icon: string }>(`/api/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteCategory = (id: string) => request(`/api/categories/${id}`, { method: 'DELETE' })

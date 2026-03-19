@@ -29,7 +29,8 @@
   },
   "bookmarks": {
     "title": "Bookmarks",
-    "empty": "No bookmarks yet"
+    "empty": "No bookmarks yet",
+    "changeCategory": "Change category"
   },
   "sessions": {
     "title": "Sessions",
@@ -72,6 +73,7 @@
     "skills": "Skills",
     "mcp": "MCP Servers",
     "memory": "AI Memory",
+    "categories": "Bookmark Categories",
     "appearance": "Appearance",
     "currentModel": "Current model",
     "provider": "Provider",
@@ -98,6 +100,12 @@
     "memoryPlaceholder": "Enter what to remember, e.g.: I prefer concise answers",
     "noMemory": "No memory items yet",
     "clearMemory": "Clear all memory",
+    "categoriesDesc": "Bookmarks are automatically categorized by AI when added. Preset categories cannot be modified, but you can add custom categories.",
+    "presetCategories": "Preset Categories",
+    "customCategories": "Custom Categories",
+    "noCustomCategories": "No custom categories yet",
+    "categoryNamePlaceholder": "Category name",
+    "deleteCategoryConfirm": "Are you sure you want to delete this category?",
     "theme": "Theme",
     "themeDesc": "Switch between light and dark mode. Settings are saved automatically.",
     "day": "Day",
