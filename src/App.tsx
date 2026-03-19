@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Settings, RefreshCw, ChevronLeft, ChevronRight, Globe,
   Plus, X, Loader2, PanelRightClose, PanelRightOpen,
@@ -422,6 +423,28 @@ function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChang
   i18n: { language: string }
 }) {
   const [showCatSelect, setShowCatSelect] = useState(false)
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 })
+  const catBtnRef = useRef<HTMLButtonElement>(null)
+
+  const openDropdown = () => {
+    if (catBtnRef.current) {
+      const rect = catBtnRef.current.getBoundingClientRect()
+      setDropdownPos({ top: rect.bottom + 4, left: rect.right - 144 })
+    }
+    setShowCatSelect(true)
+  }
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!showCatSelect) return
+    const handleClick = (e: MouseEvent) => {
+      if (catBtnRef.current && !catBtnRef.current.contains(e.target as Node)) {
+        setShowCatSelect(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showCatSelect])
 
   return (
     <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-nb-card transition-colors group">
@@ -436,16 +459,20 @@ function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChang
       </button>
 
       {/* Category selector */}
-      <div className="relative shrink-0">
+      <div className="shrink-0">
         <button
-          onClick={() => setShowCatSelect(!showCatSelect)}
+          ref={catBtnRef}
+          onClick={() => showCatSelect ? setShowCatSelect(false) : openDropdown()}
           className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-nb-raised text-nb-text-dim hover:text-nb-text-soft transition-colors"
           title="Change category"
         >
           {categories.find(c => c.id === bm.category)?.icon || '📌'}
         </button>
-        {showCatSelect && (
-          <div className="absolute right-0 top-full mt-1 w-36 bg-nb-base border border-nb-border rounded-lg shadow-xl z-50 py-1 max-h-48 overflow-y-auto">
+        {showCatSelect && createPortal(
+          <div
+            className="fixed bg-nb-base border border-nb-border rounded-lg shadow-xl z-[9999] py-1 max-h-48 overflow-y-auto"
+            style={{ top: dropdownPos.top, left: dropdownPos.left, width: 144 }}
+          >
             {categories.map(cat => (
               <button
                 key={cat.id}
@@ -457,7 +484,8 @@ function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChang
                 {cat.icon} {i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)}
               </button>
             ))}
-          </div>
+          </div>,
+          document.body
         )}
       </div>
 
