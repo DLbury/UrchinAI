@@ -4,347 +4,269 @@
 
 # UrchinAI
 
-**AI-Powered Desktop Browser with Intelligent Agent**
+**AI-Powered Desktop Browser · Control Everything with Natural Language**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org/)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
-[![Electron](https://img.shields.io/badge/Electron-33%2B-9FEAF9.svg)](https://www.electronjs.org/)
+[![Release](https://img.shields.io/github/v/release/urchinai/browser?include_prereleases)](https://github.com/urchinai/browser/releases)
+[![Downloads](https://img.shields.io/github/downloads/urchinai/browser/total)](https://github.com/urchinai/browser/releases)
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-*Control your browser with natural language — navigate, search, fill forms, and automate tasks effortlessly*
+**"打开 GitHub，搜索 React 项目，帮我整理前 10 个热门仓库"** — AI 自动完成
 
 </div>
 
 ---
 
-## Overview
+## UrchinAI 能做什么？
 
-UrchinAI is an open-source AI-powered desktop browser that integrates a built-in intelligent agent. Unlike traditional browsers, UrchinAI allows you to control web browsing through natural language commands. Simply tell the AI what you want to do, and it will navigate websites, click elements, fill forms, and perform complex automation tasks for you.
+### 🎯 核心能力
 
-### Why UrchinAI?
+| 场景 | 你只需要说 | AI 自动完成 |
+|------|-----------|------------|
+| **日常浏览** | "打开淘宝搜索机械键盘" | 导航 → 搜索 → 展示结果 |
+| **信息收集** | "帮我查今天的科技新闻并总结" | 搜索 → 抓取 → 总结 |
+| **表单填写** | "帮我填写这个注册表单" | 识别字段 → 智能填写 |
+| **数据分析** | "把这个表格数据整理成 Markdown" | 提取 → 格式化 → 输出 |
+| **网页理解** | "这个页面主要讲了什么？" | 分析 → 总结 → 解答 |
 
-- **Natural Language Control**: No need to learn complex automation scripts — just describe what you want
-- **Multi-LLM Support**: Works with OpenAI, Anthropic Claude, Google Gemini, DeepSeek, and 10+ other providers
-- **Privacy-First**: Runs locally on your machine, your data stays with you
-- **Cross-Platform**: Available for Windows, macOS, and Linux
-- **Open Source**: Fully open source under MIT license, community-driven development
+### ✨ 特色功能
 
----
-
-## Features
-
-### AI Agent Capabilities
-
-| Feature | Description |
-|---------|-------------|
-| **Natural Language Navigation** | "Go to GitHub and search for React projects" — the AI handles it |
-| **Smart Form Filling** | Automatically fills forms with context-aware input |
-| **Web Scraping** | Extract and summarize content from any webpage |
-| **Task Automation** | Automate repetitive browsing tasks with simple commands |
-| **Visual Analysis** | AI can "see" and analyze page screenshots for complex tasks |
-| **Multi-Tab Management** | Create, switch, and manage multiple tabs via voice commands |
-
-### Browser Features
-
-| Feature | Description |
-|---------|-------------|
-| **Modern UI** | Clean, intuitive interface with drag-and-drop tab management |
-| **Ad Blocking** | Built-in ad blocker (configurable in settings) |
-| **Reading Mode** | Distraction-free reading for articles and blogs |
-| **Bookmarks & History** | Full-featured bookmark and browsing history management |
-| **Session Persistence** | Save and restore your browsing sessions |
-| **Dark/Light Theme** | Comfortable viewing in any environment |
-| **i18n Support** | English and Chinese language support |
+| 功能 | 描述 |
+|------|------|
+| **🗣️ 自然语言控制** | 无需学习脚本，用日常语言控制浏览器 |
+| **🤖 多 AI 模型支持** | OpenAI、Claude、DeepSeek、Gemini 等 15+ 提供商 |
+| **🧠 AI 记忆系统** | 记住你的偏好，越用越懂你 |
+| **📚 智能书签分类** | AI 自动分类书签，告别混乱 |
+| **🔧 技能扩展** | 安装技能包，扩展 AI 能力 |
+| **🔌 MCP 协议** | 连接外部工具和服务 |
+| **📖 AI 阅读模式** | 一键总结网页内容 |
+| **🛡️ 隐私优先** | 本地运行，数据不上传 |
 
 ---
 
-## Screenshots
+## 快速开始
 
-<div align="center">
+### 下载安装
 
-### Main Interface
-<img src="docs/screenshots/screenshot-main.png" alt="UrchinAI main interface showing AI chat panel and web content" width="800"/>
+| 平台 | 下载 |
+|------|------|
+| Windows | `.exe` 安装包 + 便携版 |
+| Linux | `.deb` 安装包 |
+| macOS | 即将支持 |
 
-### Settings Panel
-<img src="docs/screenshots/screenshot-settings.png" alt="Settings panel with AI provider configuration" width="500"/>
+👉 [前往 Releases 下载最新版本](https://github.com/urchinai/browser/releases)
 
-</div>
+### 配置 AI 模型
 
----
-
-## Supported AI Providers
-
-UrchinAI supports a wide range of LLM providers through LiteLLM:
-
-| Provider | Models | API Key Required |
-|----------|--------|------------------|
-| OpenAI | GPT-5.4 (Computer Use), GPT-4o, GPT-4 | Yes |
-| Anthropic | Claude Sonnet 4.6, Claude 3.5 Sonnet/Opus/Haiku | Yes |
-| Zhipu AI | GLM-5, GLM-4 | Yes |
-| Moonshot (Kimi) | Kimi 2.5, Kimi v1 | Yes |
-| Minimax | MiniMax m2, abab6.5-chat | Yes |
-| Google | Gemini Pro, Gemini Flash | Yes |
-| DeepSeek | DeepSeek V3, DeepSeek Coder | Yes |
-| Groq | Llama 4, Llama 3, Mixtral | Yes |
-| OpenRouter | 200+ models | Yes |
-| Custom OpenAI-Compatible | Any OpenAI-compatible API | Yes |
-
----
-
-## Requirements
-
-- **Node.js** 18.0 or higher
-- **Python** 3.8 or higher
-- **pip** (Python package manager)
-
----
-
-## Quick Start
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/urchinai/browser.git
-cd browser
-```
-
-### 2. Install Dependencies
-
-```bash
-# Install Node.js dependencies
-npm install
-
-# Install Python backend dependencies
-pip install -r backend/requirements.txt
-```
-
-### 3. Configure AI Provider
-
-Create a configuration file at `~/.nanobot/config.json`:
+首次使用需要配置 AI 模型。打开设置 → 模型与服务商：
 
 ```json
+// 配置示例（配置文件位于 ~/.nanobot/config.json）
 {
   "providers": {
-    "openai": {
-      "apiKey": "your-api-key-here",
-      "apiBase": ""
+    "deepseek": {
+      "apiKey": "your-api-key",
+      "apiBase": "https://api.deepseek.com"
     }
   },
   "agents": {
     "defaults": {
-      "provider": "openai",
-      "model": "gpt-4o"
+      "provider": "deepseek",
+      "model": "deepseek-chat"
     }
   }
 }
 ```
 
-### 4. Run the Application
+### 推荐模型
 
-```bash
-# Development mode with hot reload
-npm run dev
-
-# Production build and run
-npm run build && npm start
-```
+| 模型 | 特点 | 适用场景 |
+|------|------|---------|
+| **DeepSeek V3** | 高性价比，中文友好 | 日常使用 |
+| **Claude Sonnet 4.6** | 推理能力强，支持视觉 | 复杂任务 |
+| **GPT-4o** | 综合能力强 | 通用场景 |
+| **Kimi** | 长上下文 | 文档处理 |
+| **GLM-4** | 中文优化 | 国内用户 |
 
 ---
 
-## Build for Distribution
+## 使用示例
 
-### GitHub Actions (Online Build)
+### 💬 对话式控制
 
-No local build environment? Use GitHub Actions:
+```
+用户: 帮我在京东搜索 MacBook Pro，按价格排序
+AI: [导航到京东] → [搜索 MacBook Pro] → [点击价格排序] → 完成！
 
-- **Release build**: Push a tag like `v0.1.0` → automatic build and GitHub Release with `.deb` + `.exe`
-- **Manual build**: Actions → Build and Release → Run workflow → download from Artifacts
+用户: 帮我把这个页面的产品参数整理成表格
+AI: [分析页面] → [提取参数] → [生成 Markdown 表格]
 
-See [BUILD.md](BUILD.md) for details.
+用户: 帮我找到这个作者的 Twitter 主页
+AI: [搜索作者名] → [找到 Twitter 链接] → [打开主页]
+```
 
-### Build for Current Platform
+### 🎯 自动化场景
+
+<details>
+<summary><b>📊 竞品分析</b></summary>
+
+```
+"帮我搜索 XX 行业的前 5 家公司，
+ 收集他们的产品信息和价格，
+ 整理成一个对比表格"
+```
+AI 自动：搜索 → 访问官网 → 提取信息 → 整理输出
+</details>
+
+<details>
+<summary><b>📰 每日资讯</b></summary>
+
+```
+"帮我看看今天有什么科技新闻，
+ 总结成 5 条要点"
+```
+AI 自动：打开新闻站 → 抓取头条 → 总结要点
+</details>
+
+<details>
+<summary><b>🛒 购物比价</b></summary>
+
+```
+"帮我对比这款手机在京东和淘宝的价格"
+```
+AI 自动：搜索商品 → 提取价格 → 对比展示
+</details>
+
+---
+
+## 功能截图
+
+<div align="center">
+
+### 主界面 - AI 对话控制浏览器
+<img src="docs/screenshots/screenshot-main.png" alt="Main Interface" width="700"/>
+
+### 设置面板 - 配置 AI 模型
+<img src="docs/screenshots/screenshot-settings.png" alt="Settings" width="450"/>
+
+</div>
+
+---
+
+## 开发者
+
+### 本地运行
 
 ```bash
+# 克隆项目
+git clone https://github.com/urchinai/browser.git
+cd browser
+
+# 安装依赖
+npm install
+pip install -r backend/requirements.txt
+
+# 开发模式
+npm run dev
+
+# 构建发布
 npm run dist
 ```
 
-### Platform-Specific Builds
-
-| Command | Output |
-|---------|--------|
-| `npm run dist:win` | Windows `.exe` (installer + portable) |
-| `npm run dist:linux` | Linux `.deb` package |
-
-Build outputs are placed in the `release/` directory.
-
----
-
-## Project Structure
+### 项目结构
 
 ```
 urchinai-browser/
-├── electron/              # Electron main process
-│   ├── main.js           # Application entry point
-│   └── preload.js        # IPC bridge
-├── src/                   # React frontend
-│   ├── components/       # UI components
-│   ├── hooks/            # Custom React hooks
-│   ├── locales/          # i18n translations
-│   └── App.tsx           # Main React component
-├── backend/               # Python FastAPI backend
-│   ├── main.py           # FastAPI server
-│   ├── agent/            # AI agent implementation
-│   │   ├── manager.py    # Agent orchestration
-│   │   └── browser_tool.py # Browser control tools
-│   └── api/              # REST API endpoints
-├── docs/                  # Documentation and screenshots
-└── release/              # Build output directory
+├── electron/           # Electron 主进程
+├── src/                # React 前端
+├── backend/            # Python FastAPI 后端
+│   ├── agent/          # AI Agent 实现
+│   └── api/            # REST API
+└── release/            # 构建输出
 ```
 
----
+### 技术栈
 
-## How It Works
-
-### Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    UrchinAI                          │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │   React UI  │◄──►│  Electron   │◄──►│  BrowserView│     │
-│  │  (Frontend) │    │   (Main)    │    │  (WebView)  │     │
-│  └──────┬──────┘    └──────┬──────┘    └─────────────┘     │
-│         │                  │                                  │
-│         │    WebSocket     │ HTTP Bridge (localhost:8002)   │
-│         ▼                  ▼                                  │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              Python Backend (FastAPI)                │    │
-│  │  ┌─────────────┐    ┌─────────────────────────────┐ │    │
-│  │  │ AgentManager│───►│  BrowserTools (HTTP calls)  │ │    │
-│  │  └──────┬──────┘    └─────────────────────────────┘ │    │
-│  │         │                                             │    │
-│  │         ▼                                             │    │
-│  │  ┌─────────────────────────────────────────────┐    │    │
-│  │  │     LiteLLM (Multi-provider LLM Gateway)    │    │    │
-│  │  └─────────────────────────────────────────────┘    │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### AI Agent Workflow
-
-1. **User Input**: User types a natural language command in the chat panel
-2. **LLM Processing**: The agent sends the request to the configured LLM provider
-3. **Tool Selection**: LLM decides which browser tools to use (navigate, click, type, etc.)
-4. **Browser Control**: Tools execute actions via the Electron HTTP bridge
-5. **Response Streaming**: Results are streamed back to the UI in real-time
-
----
-
-## Browser Agent Tools
-
-The AI agent has access to the following browser control tools:
-
-| Tool | Description |
-|------|-------------|
-| `browser_navigate` | Navigate to a specific URL |
-| `browser_click` | Click on page elements using @N notation or CSS selectors |
-| `browser_type` | Type text into input fields |
-| `browser_get_dom` | Get interactive elements list with @N identifiers |
-| `browser_screenshot` | Capture page screenshot for visual analysis |
-| `browser_scroll` | Scroll the page up or down |
-| `browser_press_key` | Simulate keyboard input (Enter, Tab, Escape, etc.) |
-| `browser_new_tab` | Open a new browser tab |
-| `browser_switch_tab` | Switch to a specific tab |
-| `browser_get_page_content` | Extract main content from the page |
-
----
-
-## Contributing
-
-We welcome contributions from the community! Here's how you can help:
-
-### Ways to Contribute
-
-- **Report Bugs**: Open an issue with detailed reproduction steps
-- **Suggest Features**: Share your ideas in the discussions
-- **Submit Pull Requests**: Fix bugs or add new features
-- **Improve Documentation**: Help make our docs better
-- **Translate**: Add support for more languages
-
-### Development Setup
-
-```bash
-# Fork and clone the repository
-git clone https://github.com/YOUR_USERNAME/browser.git
-
-# Create a feature branch
-git checkout -b feature/your-feature-name
-
-# Make your changes and test
-npm run dev
-
-# Submit a pull request
-```
+- **前端**: React + TypeScript + TailwindCSS
+- **后端**: Python + FastAPI + LiteLLM
+- **桌面**: Electron
+- **AI**: 支持多种 LLM 提供商
 
 ---
 
 ## Roadmap
 
-- [ ] Voice input support for AI commands
-- [ ] Browser extension support
-- [ ] Custom agent skills and workflows
-- [ ] Cloud sync for bookmarks and settings
-- [ ] Mobile companion app
-- [ ] MCP (Model Context Protocol) integration
+- [x] 自然语言浏览器控制
+- [x] 多 LLM 提供商支持
+- [x] AI 记忆系统
+- [x] 智能书签分类
+- [x] MCP 协议支持
+- [x] 技能系统
+- [ ] 语音输入
+- [ ] 浏览器扩展
+- [ ] 云同步
+- [ ] 移动端伴侣
 
 ---
 
-## FAQ
+## 常见问题
 
-### Which AI model should I use?
+<details>
+<summary><b>必须配置 AI 才能使用吗？</b></summary>
 
-For best results, we recommend models with **computer use** capabilities (visual understanding + precise control):
+不是必须的。UrchinAI 也可以作为普通浏览器使用，AI 功能是可选增强。
+</details>
 
-1. **GPT-5.4** (with Computer Use) — Best-in-class browser automation
-2. **Claude Sonnet 4.6** — Excellent for complex reasoning tasks
-3. **GLM-5** — Strong performance for Chinese users
-4. **Kimi 2.5** — Great for long-context scenarios
-5. **MiniMax m2** — Cost-effective with solid performance
+<details>
+<summary><b>我的数据安全吗？</b></summary>
 
-### Is my data sent to external servers?
+所有浏览数据都保存在本地。只有你发送给 AI 的对话会传递给你配置的 LLM 提供商。
+</details>
 
-Only your AI prompts are sent to your configured LLM provider. All browsing data stays on your local machine.
+<details>
+<summary><b>支持哪些 AI 模型？</b></summary>
 
-### Can I use this without an AI provider?
+通过 LiteLLM 支持：OpenAI、Anthropic、Google、DeepSeek、智谱、月之暗面、MiniMax、Groq、OpenRouter 等主流提供商，以及任何 OpenAI 兼容的 API。
+</details>
 
-Yes! UrchinAI works as a regular browser even without AI configuration. The AI features are optional.
+<details>
+<summary><b>如何添加新技能？</b></summary>
+
+设置 → 技能管理 → 从 URL 安装。支持安装社区贡献的 skill.md 文件。
+</details>
 
 ---
 
-## License
+## 贡献
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+欢迎贡献代码、报告问题、提出建议！
+
+```bash
+# Fork 并克隆
+git clone https://github.com/YOUR_USERNAME/browser.git
+
+# 创建分支
+git checkout -b feature/your-feature
+
+# 提交 PR
+```
 
 ---
 
-## Acknowledgments
+## 致谢
 
-- [Electron](https://www.electronjs.org/) - Cross-platform desktop apps
-- [React](https://react.dev/) - UI framework
-- [FastAPI](https://fastapi.tiangolo.com/) - Python web framework
-- [LiteLLM](https://github.com/BerriAI/litellm) - Unified LLM interface
-- [TailwindCSS](https://tailwindcss.com/) - Utility-first CSS framework
+- [Electron](https://www.electronjs.org/) - 跨平台桌面应用
+- [LiteLLM](https://github.com/BerriAI/litellm) - 统一 LLM 接口
+- [FastAPI](https://fastapi.tiangolo.com/) - Python Web 框架
+- [React](https://react.dev/) - UI 框架
 
 ---
 
 <div align="center">
 
-**[Report Bug](https://github.com/urchinai/browser/issues) · [Request Feature](https://github.com/urchinai/browser/issues) · [Join Discussion](https://github.com/urchinai/browser/discussions)**
+**[下载使用](https://github.com/urchinai/browser/releases) · [反馈问题](https://github.com/urchinai/browser/issues) · [加入讨论](https://github.com/urchinai/browser/discussions)**
 
-Made with ❤️ by the UrchinAI Team
+Made with ❤️ by UrchinAI Team
 
 </div>
