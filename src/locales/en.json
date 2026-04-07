@@ -118,7 +118,21 @@
     "fxHint": "Blue arrow cursor + click ripple during AI operations",
     "fxHintOff": "Visual effects will not be shown",
     "adBlock": "Ad blocking",
-    "adBlockDesc": "Block common ad domains. Reload page to apply."
+    "adBlockDesc": "Block common ad domains. Reload page to apply.",
+    "cookies": "Cookies",
+    "cookieDomainPlaceholder": "Filter by domain (optional)",
+    "filter": "Filter",
+    "clearAll": "Clear All",
+    "cookieName": "Name",
+    "cookieDomain": "Domain",
+    "cookiePath": "Path",
+    "cookieSecure": "Secure",
+    "noCookies": "No cookies yet",
+    "noCookiesFiltered": "No matching cookies",
+    "addCookie": "Add Cookie",
+    "cookieUrl": "URL",
+    "cookieValue": "Value",
+    "delete": "Delete"
   },
   "readingMode": {
     "title": "Reading mode"

@@ -1,3 +1,5 @@
+import typography from '@tailwindcss/typography'
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
@@ -6,11 +8,11 @@ export default {
     extend: {
       colors: {
         brand: {
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#6366f1',
-          600: '#4f46e5',
-          700: '#4338ca',
+          300: '#9bcafc',
+          400: '#79aafc',
+          500: '#58a6ff',   /* 极客蓝 accent */
+          600: '#3d8bff',
+          700: '#1a70ff',
         },
         // ── Semantic tokens backed by CSS variables ────────────────────────
         // Usage: bg-nb-deepest, text-nb-text, border-nb-border, etc.
@@ -32,5 +34,7 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    typography,
+  ],
 }

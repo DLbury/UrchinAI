@@ -36,7 +36,8 @@
     "title": "会话管理",
     "namePlaceholder": "会话名称...",
     "empty": "暂无保存的会话",
-    "tabsCount": "{{count}} 个标签"
+    "tabsCount": "{{count}} 个标签",
+    "newSession": "新建会话"
   },
   "chat": {
     "title": "Urchin AI 对话",
@@ -118,7 +119,21 @@
     "fxHint": "AI 操作时会显示蓝色箭头光标 + 点击涟漪效果",
     "fxHintOff": "操作动效不会显示在浏览器中",
     "adBlock": "广告拦截",
-    "adBlockDesc": "自动屏蔽常见广告域名，提升浏览体验（需重新加载页面生效）。"
+    "adBlockDesc": "自动屏蔽常见广告域名，提升浏览体验（需重新加载页面生效）。",
+    "cookies": "Cookie 管理",
+    "cookieDomainPlaceholder": "按域名过滤（可选）",
+    "filter": "过滤",
+    "clearAll": "清空全部",
+    "cookieName": "名称",
+    "cookieDomain": "域名",
+    "cookiePath": "路径",
+    "cookieSecure": "安全",
+    "noCookies": "暂无 Cookie",
+    "noCookiesFiltered": "没有匹配的 Cookie",
+    "addCookie": "添加 Cookie",
+    "cookieUrl": "URL",
+    "cookieValue": "值",
+    "delete": "删除"
   },
   "readingMode": {
     "title": "阅读模式"

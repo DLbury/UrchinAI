@@ -2,6 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
+@source "../node_modules/streamdown/dist/*.js";
+
 * { box-sizing: border-box; }
 
 /* ── Theme: Light (default) ─────────────────────────────────────────────────
@@ -19,39 +21,114 @@
   --nb-text-soft:     68  71  70;   /* #444746 — body text               */
   --nb-text-dim:     128 134 139;   /* #80868b — secondary / hint        */
   --nb-text-muted:   154 160 166;   /* #9aa0a6 — placeholder / meta      */
+
+  /* Streamdown / shadcn UI variables */
+  --background: rgb(var(--nb-base));
+  --foreground: rgb(var(--nb-text));
+  --card: rgb(var(--nb-card));
+  --card-foreground: rgb(var(--nb-text));
+  --muted: rgb(var(--nb-raised));
+  --muted-foreground: rgb(var(--nb-text-soft));
+  --border: rgb(var(--nb-border));
+  --input: rgb(var(--nb-raised));
+  --primary: 99 102 241;
+  --primary-foreground: 255 255 255;
+  --radius: 0.5rem;
 }
 
 /* ── Theme: Dark ────────────────────────────────────────────────────────── */
 .dark {
-  --nb-deepest:        3   7  18;   /* #030712                           */
-  --nb-base:          17  24  39;   /* #111827                           */
-  --nb-card:          31  41  55;   /* #1f2937                           */
-  --nb-raised:        55  65  81;   /* #374151                           */
-  --nb-hover:         75  85  99;   /* #4b5563                           */
-  --nb-border:        55  65  81;   /* #374151                           */
-  --nb-border-soft:   31  41  55;   /* #1f2937                           */
-  --nb-text:         249 250 251;   /* #f9fafb                           */
-  --nb-text-soft:    209 213 219;   /* #d1d5db                           */
-  --nb-text-dim:     156 163 175;   /* #9ca3af                           */
-  --nb-text-muted:   107 114 128;   /* #6b7280                           */
+  --nb-deepest:        13  17  23;   /* #0d1117 — 接近纯黑但护眼           */
+  --nb-base:           22  27  34;   /* #161b22 — 侧边栏/容器背景          */
+  --nb-card:           33  38  45;   /* #21262d — 交互组件背景             */
+  --nb-raised:         22  27  34;   /* #161b22 — raised 状态             */
+  --nb-hover:          48  54  61;   /* #30363d — hover 状态              */
+  --nb-border:         48  54  61;   /* #30363d — 边框                    */
+  --nb-border-soft:    33  38  45;   /* #21262d — 柔和边框                */
+  --nb-text:         201 209 217;   /* #c9d1d9 — 主文字                  */
+  --nb-text-soft:    139 148 158;   /* #8b949e — 次要文字                */
+  --nb-text-dim:     121 127 134;   /* #79818a — 辅助文字                */
+  --nb-text-muted:    99 103 110;   /* #636e7b — 占位符/元信息           */
+
+  /* Streamdown / shadcn UI variables */
+  --background: rgb(var(--nb-base));
+  --foreground: rgb(var(--nb-text));
+  --card: rgb(var(--nb-card));
+  --card-foreground: rgb(var(--nb-text));
+  --muted: rgb(var(--nb-raised));
+  --muted-foreground: rgb(var(--nb-text-soft));
+  --border: rgb(var(--nb-border));
+  --input: rgb(var(--nb-raised));
+  --primary: 88 166 255;           /* #58a6ff — 极客蓝强调色            */
+  --primary-foreground: 255 255 255;
 }
 
 body {
   margin: 0;
   background: rgb(var(--nb-base));
   color: rgb(var(--nb-text));
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
 }
 
-::-webkit-scrollbar { width: 4px; height: 4px; }
+/* ── 滚动条样式 ───────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgb(var(--nb-hover)); border-radius: 2px; }
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--nb-hover));
+  border-radius: 3px;
+  transition: background 0.15s ease;
+}
 ::-webkit-scrollbar-thumb:hover { background: rgb(var(--nb-text-muted)); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* 垂直滚动条 */
+.scrollbar-thin::-webkit-scrollbar { width: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgb(var(--nb-border));
+  border-radius: 2px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgb(var(--nb-text-dim)); }
 
 /* 快捷脚本栏 - 更细的滚动条 */
 .scrollbar-h-1::-webkit-scrollbar { height: 2px; }
 .scrollbar-h-1::-webkit-scrollbar-thumb { background: rgb(var(--nb-border)); }
 .scrollbar-h-1\.5::-webkit-scrollbar { height: 3px; }
 .scrollbar-h-1\.5::-webkit-scrollbar-thumb { background: rgb(var(--nb-text-muted)); }
+
+/* ── 全局过渡 ─────────────────────────────────────────────────────────── */
+* {
+  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* ── 输入框聚焦样式 ───────────────────────────────────────────────────── */
+input:focus, textarea:focus, select:focus {
+  outline: none;
+}
+
+/* ── 按钮点击效果 ──────────────────────────────────────────────────────── */
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* ── 禁用过渡的元素 ───────────────────────────────────────────────────── */
+.no-transition,
+.no-transition * {
+  transition: none !important;
+}
+
+/* ── 玻璃态效果 ────────────────────────────────────────────────────────── */
+.glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dark .glass {
+  background: rgba(22, 27, 34, 0.8);
+}
