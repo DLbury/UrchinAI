@@ -59,8 +59,14 @@ export const updateModel = (model: string, provider?: string) =>
 export const listSkills = () => request<{ skills: Array<{ id: string; name: string; description: string }> }>('/api/skills')
 export const installSkill = (url: string, name?: string) =>
   request('/api/skills/install', { method: 'POST', body: JSON.stringify({ url, name: name ?? '' }) })
+export const installLocalSkill = (name: string, content: string) =>
+  request('/api/skills/install-local', { method: 'POST', body: JSON.stringify({ name, content }) })
 export const deleteSkill = (id: string) =>
   request('/api/skills/' + id, { method: 'DELETE' })
+
+// Skills Hub
+export const listAnthropicSkills = () =>
+  request<{ skills: Array<{ id: string; name: string; description: string; url: string; source: string }> }>('/api/skills/hub/anthropic')
 
 // MCP
 export const listMCPServers = () =>
@@ -116,3 +122,9 @@ export const addCategory = (name: string, icon?: string, name_en?: string) =>
 export const updateCategory = (id: string, data: { name?: string; icon?: string; name_en?: string }) =>
   request<{ id: string; name: string; name_en: string; icon: string }>(`/api/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteCategory = (id: string) => request(`/api/categories/${id}`, { method: 'DELETE' })
+
+// Chat Sessions
+export const listChatSessions = () =>
+  request<{ sessions: Array<{ id: string; name: string; createdAt: number; messages: Array<{ id: string; role: string; content: string; toolCalls?: unknown[]; files?: unknown[]; createdAt: number }> }>; currentSessionId: string }>('/api/chat-sessions')
+export const saveChatSessions = (sessions: Array<{ id: string; name: string; createdAt: number; messages: Array<{ id: string; role: string; content: string; toolCalls?: unknown[]; files?: unknown[]; createdAt: number }> }>, currentSessionId: string) =>
+  request('/api/chat-sessions', { method: 'PUT', body: JSON.stringify({ sessions, currentSessionId }) })

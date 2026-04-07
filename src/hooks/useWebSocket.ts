@@ -95,7 +95,9 @@ export function useWebSocket(sessionId: string) {
 
   const send = useCallback((data: unknown) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data))
+      const jsonStr = JSON.stringify(data)
+      console.log('[ws] sending:', jsonStr.substring(0, 200) + (jsonStr.length > 200 ? '...' : ''))
+      wsRef.current.send(jsonStr)
     }
   }, [])
 

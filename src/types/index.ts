@@ -1,7 +1,14 @@
+export interface AttachedFile {
+  name: string
+  data: string  // base64 data URL
+  type: string  // MIME type
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  files?: AttachedFile[]
   toolCalls?: ToolCall[]
   createdAt: number
 }
@@ -15,12 +22,13 @@ export interface ToolCall {
 }
 
 export interface WSMessage {
-  type: 'token' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'history_cleared'
+  type: 'token' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'history_cleared' | 'stopped'
   content?: string
   name?: string
   args?: Record<string, unknown>
   call_id?: string
   result?: string
+  files?: AttachedFile[]
 }
 
 export interface Provider {
