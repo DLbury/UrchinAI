@@ -1,16 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, Trash2, Bot, User, ChevronDown, ChevronRight, Terminal, CheckCircle, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings, Copy, Square, Edit2, Plus, GripVertical } from 'lucide-react'
+import { Send, Trash2, Bot, User, ChevronDown, ChevronRight, Terminal, CheckCircle, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings, Copy, Square, Edit2, Plus, X, Paperclip } from 'lucide-react'
 import { useWebSocket } from '../../hooks/useWebSocket'
-import { listScripts, getConfig, updateModel, getProviders, createScript, updateScript, deleteScript } from '../../api/client'
+import MarkdownRenderer from '../common/MarkdownRenderer'
+import { listScripts, getConfig, updateModel, getProviders, createScript, updateScript, deleteScript, listChatSessions, saveChatSessions } from '../../api/client'
 import type { ChatMessage, ToolCall, WSMessage } from '../../types'
+
+interface ChatSession {
+  id: string
+  name: string
+  createdAt: number
+}
 
 interface ChatPanelProps {
   sessionId: string
+  sessions: ChatSession[]
+  currentSessionId: string
+  onSwitchSession: (id: string) => void
+  onNewSession: () => void
+  onRenameSession: (id: string, name: string) => void
+  onDeleteSession: (id: string) => void
   onAgentNavigate?: (url: string) => void
   /** Ref that parent can use to programmatically send a message */
   sendRef?: React.MutableRefObject<((text: string) => void) | null>
   onOpenSettings?: () => void
+  /** Called when sessions or messages change (for persistence) */
+  onSessionsChange?: (sessions: ChatSession[], messagesBySession: Record<string, ChatMessage[]>) => void
 }
 
 // 每个服务商的推荐模型
@@ -138,43 +153,93 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
     }
   }
 
+  // 格式化时间戳
+  const formatTime = (timestamp: number) => {
+    const date = new Date(timestamp * 1000)
+    const now = new Date()
+    const isToday = date.toDateString() === now.toDateString()
+    if (isToday) {
+      return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    }
+    return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+
   return (
     <div className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && (
-        <div className="shrink-0 w-7 h-7 rounded-full bg-brand-600 flex items-center justify-center mt-0.5">
-          <Bot size={14} />
+        <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center mt-0.5 shadow-lg shadow-brand-500/20">
+          <Bot size={15} className="text-white" />
         </div>
       )}
       <div className={`max-w-[85%] ${isUser ? 'order-first' : ''}`}>
+        {/* 消息内容气泡 */}
         <div
-          className={`relative px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap select-text ${
-            isUser ? 'bg-brand-600 text-white rounded-tr-sm' : 'bg-nb-card text-nb-text rounded-tl-sm border border-nb-border'
+          className={`relative px-4 py-3 rounded-2xl text-sm leading-relaxed transition-all duration-200 ${
+            isUser
+              ? 'bg-gradient-to-br from-brand-600 to-brand-700 text-white rounded-tr-sm shadow-lg shadow-brand-500/25'
+              : 'bg-nb-card text-nb-text rounded-tl-sm border border-nb-border shadow-sm'
           }`}
           onMouseEnter={() => setShowCopy(true)}
           onMouseLeave={() => setShowCopy(false)}
         >
-          {msg.content || (msg.role === 'assistant' && !msg.toolCalls?.length ? (
-            <span className="inline-flex gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-nb-text-dim animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-1.5 h-1.5 rounded-full bg-nb-text-dim animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-1.5 h-1.5 rounded-full bg-nb-text-dim animate-bounce" style={{ animationDelay: '300ms' }} />
+          {!msg.content && msg.role === 'assistant' && !msg.toolCalls?.length && (
+            <span className="inline-flex items-center gap-1 px-1">
+              {/* 改进的加载动画 */}
+              <span className="w-2 h-2 rounded-full bg-brand-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-2 h-2 rounded-full bg-brand-400 animate-bounce" style={{ animationDelay: '120ms' }} />
+              <span className="w-2 h-2 rounded-full bg-brand-400 animate-bounce" style={{ animationDelay: '240ms' }} />
             </span>
-          ) : null)}
+          )}
+          {/* AI 消息使用 Markdown 渲染 */}
+          {msg.content && !isUser && (
+            <div className="select-text">
+              <MarkdownRenderer content={msg.content} />
+            </div>
+          )}
+          {/* 用户消息保持纯文本 */}
+          {msg.content && isUser && (
+            <div className="select-text whitespace-pre-wrap">{msg.content}</div>
+          )}
+          {/* 用户消息的附件图片 */}
+          {isUser && msg.files && msg.files.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {msg.files.map((file, index) => (
+                file.type.startsWith('image/') ? (
+                  <img
+                    key={index}
+                    src={file.data}
+                    alt={file.name}
+                    className="max-w-[200px] max-h-[150px] rounded-lg object-cover"
+                  />
+                ) : (
+                  <div key={index} className="flex items-center gap-1 px-2 py-1 rounded bg-nb-raised/50 text-xs text-nb-text-soft">
+                    📎 {file.name}
+                  </div>
+                )
+              ))}
+            </div>
+          )}
           {msg.content && showCopy && (
             <button
               onClick={handleCopy}
-              className="absolute -right-2 -top-2 p-1 rounded bg-nb-raised border border-nb-border hover:bg-nb-hover transition-colors"
+              className="absolute -right-2 -top-2 p-1.5 rounded-lg bg-nb-card border border-nb-border hover:bg-nb-raised hover:border-brand-500/50 transition-all duration-150 shadow-sm hover:scale-105 active:scale-95"
               title={copied ? '已复制' : '复制'}
             >
-              {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} className="text-nb-text-dim" />}
+              {copied ? <Check size={12} className="text-green-500" /> : <Copy size={12} className="text-nb-text-dim" />}
             </button>
           )}
         </div>
+        {/* 时间戳 */}
+        {msg.createdAt && (
+          <p className={`text-[10px] text-nb-text-muted mt-1 ${isUser ? 'text-right' : 'text-left'} px-1`}>
+            {formatTime(msg.createdAt)}
+          </p>
+        )}
         {msg.toolCalls?.map((tool) => <ToolCallCard key={tool.id} tool={tool} />)}
       </div>
       {isUser && (
-        <div className="shrink-0 w-7 h-7 rounded-full bg-nb-raised flex items-center justify-center mt-0.5">
-          <User size={14} />
+        <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-nb-raised to-nb-hover flex items-center justify-center mt-0.5 shadow-sm">
+          <User size={15} className="text-nb-text-soft" />
         </div>
       )}
     </div>
@@ -218,7 +283,7 @@ function ScriptEditorModal({
         const updated = [...editingScripts, newScript]
         setEditingScripts(updated)
         onSave(updated)
-      } else {
+      } else if (typeof editingId === 'string') {
         await updateScript(editingId, editForm)
         const updated = editingScripts.map(s =>
           s.id === editingId ? { ...s, ...editForm } : s
@@ -342,13 +407,6 @@ function ScriptEditorModal({
   )
 }
 
-// 已知服务商列表
-const KNOWN_PROVIDERS = [
-  'openrouter', 'anthropic', 'openai', 'deepseek', 'gemini',
-  'groq', 'minimax', 'moonshot', 'zhipu', 'dashscope',
-  'volcengine', 'siliconflow', 'aihubmix', 'azure_openai', 'vllm', 'custom',
-]
-
 // 服务商显示名称
 const PROVIDER_LABELS: Record<string, string> = {
   openrouter: 'OpenRouter',
@@ -432,9 +490,19 @@ function ModelSelector({
   // 获取当前模型的显示名称
   const getModelLabel = (model: string, provider: string) => {
     if (!model) return t('chat.selectModel') || '选择模型'
-    const models = getProviderModels(provider)
-    const found = models.find(p => p.value === model)
-    if (found) return found.label
+    // 如果有 provider，尝试从对应服务商获取模型名称
+    if (provider) {
+      const models = getProviderModels(provider)
+      const found = models.find(p => p.value === model)
+      if (found) return found.label
+    }
+    // 如果找不到，尝试在所有预设模型中查找
+    for (const p of Object.keys(PRESET_MODELS)) {
+      const models = PRESET_MODELS[p]
+      const found = models?.find(m => m.value === model)
+      if (found) return found.label
+    }
+    // 如果都找不到，返回原始值（可能来自后端配置）
     return model.length > 20 ? model.slice(0, 20) + '...' : model
   }
 
@@ -532,9 +600,21 @@ function ModelSelector({
 
 interface Script { id: string; name: string; prompt: string; icon: string }
 
-export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenSettings }: ChatPanelProps) {
+export default function ChatPanel({
+  sessionId,
+  sessions,
+  currentSessionId,
+  onSwitchSession,
+  onNewSession,
+  onRenameSession,
+  onDeleteSession,
+  onAgentNavigate,
+  sendRef,
+  onOpenSettings
+}: ChatPanelProps) {
   const { t } = useTranslation()
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({})
+  const messages = messagesBySession[sessionId] ?? []
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   // 使用默认脚本确保立即显示，后端就绪后尝试更新
@@ -542,11 +622,21 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
   const [currentModel, setCurrentModel] = useState('')
   const [currentProvider, setCurrentProvider] = useState('')
   const [showScriptEditor, setShowScriptEditor] = useState(false)
+  const [showSessionPanel, setShowSessionPanel] = useState(false)
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; data: string; type: string }[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const streamingMsgIdRef = useRef<string | null>(null)
   const pendingToolsRef = useRef<Map<string, string>>(new Map())
+  // Token burst smoothing: backend may emit many tokens very quickly; React 18 can batch
+  // state updates and it looks "non-streaming". Buffer tokens and flush at most once/frame.
+  const tokenBufferRef = useRef('')
+  const flushRafRef = useRef<number | null>(null)
   const scriptsScrollRef = useRef<HTMLDivElement>(null)
+  const sessionPanelRef = useRef<HTMLDivElement>(null)
 
   const { send, onMessage, status, reconnect } = useWebSocket(sessionId)
 
@@ -557,9 +647,21 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
       const raw = cfg.config as Record<string, unknown>
       const agents = raw?.agents as Record<string, unknown> | undefined
       const defaults = agents?.defaults as Record<string, unknown> | undefined
-      setCurrentModel((defaults?.model as string) ?? '')
-      setCurrentProvider((defaults?.provider as string) ?? '')
-    } catch {}
+      let model = (defaults?.model as string) ?? ''
+      let provider = (defaults?.provider as string) ?? ''
+      console.log('[ChatPanel] loadConfig:', { model, provider, raw })
+      // 如果没有配置模型但有预设模型，使用第一个预设模型作为默认值
+      if (!model && Object.keys(PRESET_MODELS).length > 0) {
+        const firstProvider = Object.keys(PRESET_MODELS)[0]
+        const firstModel = PRESET_MODELS[firstProvider][0]
+        model = firstModel.value
+        provider = firstProvider
+      }
+      setCurrentModel(model)
+      setCurrentProvider(provider)
+    } catch (e) {
+      console.error('[ChatPanel] loadConfig error:', e)
+    }
   }, [])
 
   // 加载脚本（可重复调用）
@@ -584,13 +686,52 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
       return
     }
 
-    // 生产环境：等待 backend:ready 事件
+    // 生产环境：等待 backend:ready 事件，同时设置超时 fallback
+    const timeout = setTimeout(() => {
+      loadConfig()
+      loadScripts()
+    }, 3000) // 3秒超时 fallback
+
     const off = eAPI.onBackendReady(() => {
+      clearTimeout(timeout)
       loadConfig()
       loadScripts()
     })
-    return () => off?.()
+    return () => {
+      clearTimeout(timeout)
+      off?.()
+    }
   }, [loadConfig, loadScripts])
+
+  // ── Persist messages to backend ───────────────────────────────────────────
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Load messages from API on mount
+  useEffect(() => {
+    listChatSessions().then(data => {
+      const msgs: Record<string, ChatMessage[]> = {}
+      for (const s of data.sessions) {
+        msgs[s.id] = (s.messages || []) as ChatMessage[]
+      }
+      setMessagesBySession(msgs)
+    }).catch(() => {})
+  }, [])
+
+  // Debounced persist whenever messages change
+  useEffect(() => {
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
+    persistTimerRef.current = setTimeout(() => {
+      // Merge current sessions (from props) with latest messages
+      const fullSessions = sessions.map(s => ({
+        ...s,
+        messages: messagesBySession[s.id] || [],
+      }))
+      saveChatSessions(fullSessions, sessionId).catch(() => {})
+    }, 800)
+    return () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
+    }
+  }, [messagesBySession, sessions, sessionId])
 
   // 脚本栏横向滚动：使用非被动事件监听器避免 preventDefault 警告
   useEffect(() => {
@@ -629,15 +770,31 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
 
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
+  const flushTokenBuffer = useCallback(() => {
+    if (!tokenBufferRef.current) return
+    const chunk = tokenBufferRef.current
+    tokenBufferRef.current = ''
+    const msgId = streamingMsgIdRef.current
+    if (!msgId) return
+    setMessagesBySession(prev => ({
+      ...prev,
+      [sessionId]: (prev[sessionId] ?? []).map((m) => m.id === msgId ? { ...m, content: (m.content ?? '') + chunk } : m)
+    }))
+  }, [sessionId])
+
+  // Immediately flush on token (no RAF batching) to ensure incremental rendering
+  const scheduleFlush = useCallback(() => {
+    flushTokenBuffer()
+  }, [flushTokenBuffer])
+
   useEffect(() => {
     onMessage((msg: WSMessage) => {
       if (msg.type === 'token') {
         const token = msg.content ?? ''
-        setMessages((prev) => {
-          if (!streamingMsgIdRef.current) return prev
-          return prev.map((m) => m.id === streamingMsgIdRef.current ? { ...m, content: m.content + token } : m)
-        })
+        tokenBufferRef.current += token
+        scheduleFlush()
       } else if (msg.type === 'tool_call') {
+        flushTokenBuffer()
         const toolCall: ToolCall = {
           id: msg.call_id ?? Math.random().toString(36).slice(2),
           name: msg.name ?? '', args: msg.args ?? {}, status: 'running',
@@ -646,48 +803,84 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
         if (toolCall.name === 'browser_navigate' && toolCall.args.url) {
           onAgentNavigate?.(toolCall.args.url as string)
         }
-        setMessages((prev) => {
+        setMessagesBySession(prev => {
           if (!streamingMsgIdRef.current) return prev
           const msgId = streamingMsgIdRef.current
           pendingToolsRef.current.set(toolCall.id, msgId)
-          return prev.map((m) => m.id === msgId ? { ...m, toolCalls: [...(m.toolCalls ?? []), toolCall] } : m)
+          return {
+            ...prev,
+            [sessionId]: (prev[sessionId] ?? []).map((m) => m.id === msgId ? { ...m, toolCalls: [...(m.toolCalls ?? []), toolCall] } : m)
+          }
         })
       } else if (msg.type === 'tool_result') {
+        flushTokenBuffer()
         const callId = msg.call_id ?? ''
         const msgId = pendingToolsRef.current.get(callId)
         if (msgId) {
-          setMessages((prev) => prev.map((m) => m.id === msgId ? {
+          setMessagesBySession(prev => ({
+          ...prev,
+          [sessionId]: (prev[sessionId] ?? []).map((m) => m.id === msgId ? {
             ...m, toolCalls: m.toolCalls?.map((t) => t.id === callId ? { ...t, result: String(msg.content ?? ''), status: 'done' } : t),
-          } : m))
+          } : m)
+        }))
         }
       } else if (msg.type === 'done') {
+        flushTokenBuffer()
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
       } else if (msg.type === 'error') {
+        flushTokenBuffer()
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
-        setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: 'assistant', content: `错误：${msg.content ?? '未知错误'}`, createdAt: Date.now() }])
+        setMessagesBySession(prev => ({
+          ...prev,
+          [sessionId]: [...(prev[sessionId] ?? []), { id: `err-${Date.now()}`, role: 'assistant', content: `错误：${msg.content ?? '未知错误'}`, createdAt: Date.now() }]
+        }))
       } else if (msg.type === 'stopped') {
+        flushTokenBuffer()
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
       } else if (msg.type === 'history_cleared') {
-        setMessages([])
+        tokenBufferRef.current = ''
+        if (flushRafRef.current != null) {
+          cancelAnimationFrame(flushRafRef.current)
+          flushRafRef.current = null
+        }
+        setMessagesBySession(prev => ({ ...prev, [sessionId]: [] }))
       }
     })
-  }, [onMessage])
+    return () => {
+      if (flushRafRef.current != null) {
+        cancelAnimationFrame(flushRafRef.current)
+        flushRafRef.current = null
+      }
+      tokenBufferRef.current = ''
+    }
+  }, [onMessage, flushTokenBuffer, scheduleFlush, sessionId])
 
   const sendMessage = useCallback((overrideText?: string) => {
     const text = (overrideText ?? input).trim()
-    if (!text || isStreaming || status !== 'connected') return
+    if ((!text && attachedFiles.length === 0) || isStreaming || status !== 'connected') return
     const userMsgId = `user-${Date.now()}`
     const assistantMsgId = `assistant-${Date.now()}`
-    setMessages((prev) => [
+
+    // 构建用户消息内容（包含文件）
+    const userContent = text || (attachedFiles.length > 0 ? `[上传了 ${attachedFiles.length} 个文件]` : '')
+    const messageData: { content: string; files?: { name: string; data: string; type: string }[] } = { content: userContent }
+    if (attachedFiles.length > 0) {
+      messageData.files = [...attachedFiles]
+    }
+
+    setMessagesBySession(prev => ({
       ...prev,
-      { id: userMsgId, role: 'user', content: text, createdAt: Date.now() },
-      { id: assistantMsgId, role: 'assistant', content: '', toolCalls: [], createdAt: Date.now() },
-    ])
+      [sessionId]: [...(prev[sessionId] ?? []),
+        { id: userMsgId, role: 'user', content: userContent, files: attachedFiles, createdAt: Date.now() },
+        { id: assistantMsgId, role: 'assistant', content: '', toolCalls: [], createdAt: Date.now() },
+      ]
+    }))
     streamingMsgIdRef.current = assistantMsgId
     setIsStreaming(true)
-    if (!overrideText) setInput('')
-    send({ type: 'chat', content: text })
-  }, [input, isStreaming, status, send])
+    setInput('')
+    setAttachedFiles([])
+    send({ type: 'chat', content: userContent, files: attachedFiles.length > 0 ? attachedFiles : undefined })
+  }, [input, isStreaming, status, send, attachedFiles])
 
   // Expose sendMessage to parent via ref
   useEffect(() => {
@@ -716,7 +909,33 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
     adjustTextareaHeight()
   }, [input, adjustTextareaHeight])
 
-  const clearHistory = () => { send({ type: 'clear_history' }); setMessages([]) }
+  const clearHistory = () => { send({ type: 'clear_history' }); setMessagesBySession(prev => ({ ...prev, [sessionId]: [] })) }
+
+  // 文件上传处理
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+
+    Array.from(files).forEach(file => {
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const data = ev.target?.result as string
+        setAttachedFiles(prev => [...prev, {
+          name: file.name,
+          data,
+          type: file.type
+        }])
+      }
+      reader.readAsDataURL(file)
+    })
+
+    // 清空 input 以允许重复选择同一文件
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [])
+
+  const removeAttachedFile = useCallback((index: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+  }, [])
 
   // 停止生成
   const stopGeneration = () => {
@@ -726,13 +945,120 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
     pendingToolsRef.current.clear()
   }
 
+  // 点击外部关闭会话面板
+  useEffect(() => {
+    if (!showSessionPanel) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (sessionPanelRef.current && !sessionPanelRef.current.contains(e.target as Node)) {
+        setShowSessionPanel(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showSessionPanel])
+
   return (
     <div className="flex flex-col h-full bg-nb-base rounded-xl border border-nb-border overflow-hidden">
       {/* 标题栏 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-nb-border bg-nb-card">
         <div className="flex items-center gap-2">
           <Bot size={16} className="text-brand-400" />
-          <span className="font-semibold text-sm">{t('chat.title')}</span>
+          {/* 会话选择器 */}
+          <div className="relative" ref={sessionPanelRef}>
+            <button
+              onClick={() => setShowSessionPanel(!showSessionPanel)}
+              className="flex items-center gap-1.5 text-sm font-semibold text-nb-text hover:text-brand-400 transition-colors"
+            >
+              <span className="max-w-[120px] truncate">
+                {sessions.find(s => s.id === currentSessionId)?.name || '会话'}
+              </span>
+              <ChevronDown size={14} className={`transition-transform ${showSessionPanel ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showSessionPanel && (
+              <div className="absolute left-0 top-full mt-1 w-56 max-h-[60vh] bg-nb-base border border-nb-border rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-nb-border">
+                  <span className="text-xs font-medium text-nb-text-muted">会话列表</span>
+                  <button
+                    onClick={() => {
+                      onNewSession()
+                      setShowSessionPanel(false)
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-brand-600 hover:bg-brand-500 text-white transition-colors"
+                  >
+                    <Plus size={12} />
+                    新建
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                  {sessions.map(session => (
+                    <div
+                      key={session.id}
+                      className={`flex items-center gap-2 px-2 py-2 rounded-lg cursor-pointer transition-colors ${
+                        session.id === currentSessionId
+                          ? 'bg-brand-500/10 text-brand-400'
+                          : 'hover:bg-nb-raised text-nb-text-soft'
+                      }`}
+                    >
+                      {editingSessionId === session.id ? (
+                        <input
+                          value={editingName}
+                          onChange={e => setEditingName(e.target.value)}
+                          onBlur={() => {
+                            if (editingName.trim()) {
+                              onRenameSession(session.id, editingName.trim())
+                            }
+                            setEditingSessionId(null)
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              if (editingName.trim()) {
+                                onRenameSession(session.id, editingName.trim())
+                              }
+                              setEditingSessionId(null)
+                            }
+                          }}
+                          className="flex-1 bg-nb-card border border-nb-border rounded px-1.5 py-1 text-xs outline-none focus:border-brand-500"
+                          autoFocus
+                        />
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => {
+                              onSwitchSession(session.id)
+                              setShowSessionPanel(false)
+                            }}
+                            className="flex-1 text-left text-xs truncate"
+                          >
+                            {session.name}
+                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setEditingSessionId(session.id)
+                                setEditingName(session.name)
+                              }}
+                              className="p-1 rounded text-nb-text-dim hover:text-nb-text hover:bg-nb-hover transition-colors"
+                            >
+                              <Edit2 size={10} />
+                            </button>
+                            {sessions.length > 1 && (
+                              <button
+                                onClick={() => onDeleteSession(session.id)}
+                                className="p-1 rounded text-nb-text-dim hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                              >
+                                <X size={10} />
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-nb-text-dim">
@@ -751,10 +1077,29 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-nb-text-muted">
-            <Bot size={40} className="opacity-30" />
-            <p className="text-sm">{t('chat.empty')}</p>
-            <p className="text-xs opacity-70">{t('chat.emptyHint')}</p>
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-nb-text-muted">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-brand-500/20 to-brand-600/20 rounded-full blur-xl" />
+              <Bot size={48} className="relative text-brand-400/60" />
+            </div>
+            <div className="text-center space-y-1">
+              <p className="text-sm font-medium text-nb-text-soft">{t('chat.empty')}</p>
+              <p className="text-xs text-nb-text-muted max-w-[200px]">{t('chat.emptyHint')}</p>
+            </div>
+            {/* 快捷操作提示 */}
+            <div className="flex gap-2 mt-2">
+              {scripts.slice(0, 3).map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => sendMessage(s.prompt)}
+                  disabled={isStreaming || status !== 'connected'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-nb-border/50 bg-nb-card/50 text-[11px] text-nb-text-dim hover:text-brand-500 hover:border-brand-500/30 transition-all duration-150"
+                >
+                  <span>{s.icon}</span>
+                  <span>{s.name}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)}
@@ -763,8 +1108,8 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
 
       {/* 快捷脚本栏 */}
       {scripts.length > 0 && (
-        <div className="flex gap-1.5 px-3 py-1.5 border-t border-nb-border items-center group">
-          <Zap size={12} className="text-nb-text-muted shrink-0" />
+        <div className="flex gap-2 px-3 py-2 border-t border-nb-border items-center group bg-nb-card/50">
+          <Zap size={13} className="text-brand-500 shrink-0" />
           <div ref={scriptsScrollRef} className="scripts-scroll flex gap-1.5 overflow-x-auto scrollbar-thin scrollbar-h-1 group-hover:scrollbar-h-1.5 transition-all">
             {scripts.map(s => (
               <button
@@ -772,19 +1117,19 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
                 onClick={() => sendMessage(s.prompt)}
                 disabled={isStreaming || status !== 'connected'}
                 title={s.prompt}
-                className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full border border-nb-border bg-nb-card hover:border-brand-500 hover:bg-brand-500/10 text-nb-text-dim hover:text-brand-500 disabled:opacity-40 text-[11px] transition-colors"
+                className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-nb-border/60 bg-gradient-to-br from-nb-card to-nb-raised/50 hover:from-brand-500/10 hover:to-brand-500/5 hover:border-brand-500/50 hover:shadow-sm hover:shadow-brand-500/10 text-nb-text-soft hover:text-brand-500 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] transition-all duration-150 active:scale-95"
               >
-                <span>{s.icon}</span>
-                <span>{s.name}</span>
+                <span className="text-[13px]">{s.icon}</span>
+                <span className="font-medium">{s.name}</span>
               </button>
             ))}
           </div>
           <button
             onClick={() => setShowScriptEditor(true)}
-            className="shrink-0 p-0.5 rounded-full text-nb-text-muted hover:text-nb-text hover:bg-nb-raised transition-colors"
+            className="shrink-0 p-1.5 rounded-lg text-nb-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-all duration-150"
             title="编辑快捷指令"
           >
-            <Edit2 size={10} />
+            <Edit2 size={12} />
           </button>
         </div>
       )}
@@ -799,8 +1144,46 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
       )}
 
       {/* 输入框 */}
-      <div className="px-3 py-3 border-t border-nb-border bg-nb-card">
-        <div className="flex items-end gap-2 bg-nb-raised rounded-xl px-3 py-2">
+      <div className="px-3 py-3 border-t border-nb-border bg-gradient-to-t from-nb-card to-nb-card/80">
+        {/* 附件预览 */}
+        {attachedFiles.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {attachedFiles.map((file, index) => (
+              <div key={index} className="relative group flex items-center gap-2 px-3 py-1.5 rounded-lg bg-nb-raised border border-nb-border">
+                {file.type.startsWith('image/') ? (
+                  <img src={file.data} alt={file.name} className="w-8 h-8 object-cover rounded" />
+                ) : (
+                  <span className="text-xs text-nb-text-dim">📎</span>
+                )}
+                <span className="text-xs text-nb-text-soft max-w-[100px] truncate">{file.name}</span>
+                <button
+                  onClick={() => removeAttachedFile(index)}
+                  className="absolute -top-1 -right-1 p-0.5 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-2 bg-nb-deepest/40 hover:bg-nb-deepest/60 rounded-2xl px-4 py-2.5 transition-all duration-150 focus-within:bg-nb-deepest/60 focus-within:ring-2 focus-within:ring-brand-500/30 border border-nb-border/50 focus-within:border-brand-500/40">
+          {/* 文件上传按钮 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,.pdf,.doc,.docx,.txt"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={status !== 'connected'}
+            className="shrink-0 p-1.5 rounded-lg text-nb-text-dim hover:text-brand-500 hover:bg-brand-500/10 transition-all duration-150 disabled:opacity-50"
+            title="上传文件"
+          >
+            <Paperclip size={16} />
+          </button>
           <textarea
             ref={inputRef}
             value={input}
@@ -822,28 +1205,29 @@ export default function ChatPanel({ sessionId, onAgentNavigate, sendRef, onOpenS
           {isStreaming ? (
             <div className="relative group">
               <button
-                className="shrink-0 p-1.5 rounded-lg bg-nb-card border border-nb-border transition-colors"
+                className="shrink-0 p-2 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-amber-500/30 transition-all"
               >
-                <Loader2 size={16} className="animate-spin text-brand-400" />
+                <Loader2 size={16} className="animate-spin text-amber-500" />
               </button>
               {/* hover 时显示停止按钮 */}
               <button
                 onClick={stopGeneration}
-                className="absolute inset-0 shrink-0 p-1.5 rounded-lg bg-nb-card border border-nb-border opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                className="absolute inset-0 shrink-0 p-2 rounded-xl bg-gradient-to-br from-red-500/20 to-red-600/20 border border-red-500/30 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center shadow-sm"
                 title="停止生成"
               >
-                <Square size={14} className="text-nb-text-dim" />
+                <Square size={14} className="text-red-500" />
               </button>
             </div>
           ) : (
             <button onClick={() => sendMessage(undefined)}
               disabled={!input.trim() || status !== 'connected'}
-              className="shrink-0 p-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-              <Send size={16} />
+              className="shrink-0 p-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-700 hover:from-brand-500 hover:to-brand-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150 shadow-sm hover:shadow-md hover:shadow-brand-500/20 active:scale-95 disabled:hover:shadow-none"
+            >
+              <Send size={16} className={input.trim() ? '' : 'opacity-50'} />
             </button>
           )}
         </div>
-        <p className="text-xs text-nb-text-muted mt-1.5 pl-1">
+        <p className="text-[11px] text-nb-text-muted/70 mt-1.5 pl-2">
           {t('chat.hint')}
         </p>
       </div>

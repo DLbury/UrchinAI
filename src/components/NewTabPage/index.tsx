@@ -201,8 +201,8 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
 
         {/* Search bar */}
         <div className="w-full max-w-xl">
-          <div className="flex items-center gap-3 bg-nb-card border border-nb-border hover:border-nb-text-muted
-                          focus-within:border-brand-500 rounded-2xl px-4 py-3 shadow-sm transition-all">
+          <div className="flex items-center gap-3 bg-nb-deepest/40 border border-nb-border/70 hover:border-nb-text-muted/60
+                          focus-within:border-brand-500/50 rounded-2xl px-4 py-3 transition-all">
             <Search size={18} className="text-nb-text-muted shrink-0" />
             <input
               autoFocus

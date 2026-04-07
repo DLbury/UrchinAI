@@ -3,13 +3,14 @@ import {
   X, Settings, Save, Plus, Trash2, Eye, EyeOff,
   Loader2, CheckCircle, Puzzle, Server, Terminal,
   Globe, Edit2, Check, AlertCircle, ExternalLink, BookOpen, Brain, Sparkles,
-  MousePointer2, Sun, Moon, Monitor, Bookmark,
+  MousePointer2, Sun, Moon, Monitor, Bookmark, Cookie,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../hooks/useTheme'
 import {
   getConfig, updateModel, updateProvider, deleteProvider,
-  listSkills, installSkill, deleteSkill,
+  listSkills, installSkill, installLocalSkill, deleteSkill,
+  listAnthropicSkills,
   listMCPServers, addMCPServer, updateMCPServer, deleteMCPServer,
   listMemory, addMemory, deleteMemory, clearMemory,
   listCategories, addCategory, deleteCategory,
@@ -17,7 +18,7 @@ import {
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
 
-type Tab = 'model' | 'skills' | 'mcp' | 'memory' | 'categories' | 'appearance'
+type Tab = 'model' | 'skills' | 'mcp' | 'memory' | 'categories' | 'appearance' | 'cookies'
 type SaveState = 'idle' | 'saving' | 'saved'
 
 interface ModelItem { label: string; value: string }
@@ -36,6 +37,7 @@ interface MCPServer {
   url?: string; headers?: Record<string, string>; toolTimeout?: number
 }
 interface CategoryInfo { id: string; name: string; name_en: string; icon: string }
+interface CookieItem   { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly: boolean; sameSite: string; expirationDate?: number }
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -105,11 +107,6 @@ const PRESET_MODELS: Record<string, { label: string; value: string }[]> = {
   ],
 }
 
-const FEATURED_SKILLS = [
-  { name: 'GitHub', url: 'https://raw.githubusercontent.com/HKUDS/nanobot/main/nanobot/skills/github/skill.md', description: '管理 GitHub 仓库、Issue 和 PR' },
-  { name: 'Weather', url: 'https://raw.githubusercontent.com/HKUDS/nanobot/main/nanobot/skills/weather/skill.md', description: '获取天气预报' },
-]
-
 const MCP_TEMPLATES = [
   { name: 'filesystem', type: 'stdio' as const, command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/home'], description: '本地文件系统访问' },
   { name: 'brave-search', type: 'stdio' as const, command: 'npx', args: ['-y', '@modelcontextprotocol/server-brave-search'], description: 'Brave 网页搜索' },
@@ -156,20 +153,30 @@ function ModelTab() {
       const raw = cfg.config as Record<string, unknown>
       const agents = raw?.agents as Record<string, unknown> | undefined
       const defaults = agents?.defaults as Record<string, unknown> | undefined
+
+      // Legacy provider name migration (same as backend/agent/manager.py)
+      const LEGACY_PROVIDER_MAP: Record<string, string> = { ali: 'dashscope', zhipu: 'zhipuai' }
+      const migrateProvider = (name: string) => LEGACY_PROVIDER_MAP[name] ?? name
+
+      const rawProvider = (defaults?.provider as string) ?? ''
+      const migratedProvider = migrateProvider(rawProvider)
       setCurrentModel((defaults?.model as string) ?? '')
-      setCurrentProvider((defaults?.provider as string) ?? '')
+      setCurrentProvider(migratedProvider)
 
       const rawProviders = raw?.providers as Record<string, { apiKey?: string; apiBase?: string; models?: ModelItem[] }> | undefined
       if (rawProviders) {
-        setProviders(Object.entries(rawProviders).map(([name, v]) => ({
-          name,
-          apiKey: v?.apiKey ?? '',
-          apiBase: v?.apiBase ?? '',
-          models: v?.models ?? PRESET_MODELS[name] ?? [],
-          showKey: false,
-          newModelLabel: '',
-          newModelValue: '',
-        })))
+        setProviders(Object.entries(rawProviders).map(([name, v]) => {
+          const migratedName = migrateProvider(name)
+          return {
+            name: migratedName,
+            apiKey: v?.apiKey ?? '',
+            apiBase: v?.apiBase ?? '',
+            models: v?.models ?? PRESET_MODELS[migratedName] ?? [],
+            showKey: false,
+            newModelLabel: '',
+            newModelValue: '',
+          }
+        }))
       }
     } finally { setLoading(false) }
   }, [])
@@ -491,16 +498,61 @@ function SkillsTab() {
   const [installName, setInstallName] = useState('')
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState('')
-  const loadedRef = useRef(false)
+  const [showAnthropic, setShowAnthropic] = useState(false)
+  const [hubSkills, setHubSkills] = useState<Array<{ id: string; name: string; description: string; url: string; source: string }>>([])
+  const [hubLoading, setHubLoading] = useState(false)
+  const [hubError, setHubError] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searching, setSearching] = useState(false)
+  const hubSkillsCache = useRef<Array<{ id: string; name: string; description: string; url: string; source: string }>>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const reload = useCallback(async () => {
-    if (loadedRef.current) return
-    loadedRef.current = true
     setLoading(true)
     try { const d = await listSkills(); setSkills(d.skills) } finally { setLoading(false) }
   }, [])
 
   useEffect(() => { reload() }, [reload])
+
+  // 搜索 Anthropic Skills（通过后端 Contents API 做过滤，避免 GitHub Search API 限速）
+  const searchAnthropicSkills = async () => {
+    const query = searchQuery.trim()
+    if (!query) {
+      await loadAnthropicHub()
+      return
+    }
+    setSearching(true)
+    setHubError('')
+    try {
+      // 优先用缓存，否则调 API
+      const skills = hubSkillsCache.current.length > 0 ? hubSkillsCache.current : (await listAnthropicSkills()).skills
+      const q = query.toLowerCase()
+      const filtered = skills.filter((s: any) =>
+        s.id.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
+      )
+      setHubSkills(filtered)
+    } catch (err) {
+      setHubError('搜索失败: ' + String(err))
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const loadAnthropicHub = async () => {
+    setShowAnthropic(true)
+    setHubLoading(true)
+    setHubError('')
+    setSearchQuery('')
+    try {
+      const d = await listAnthropicSkills()
+      hubSkillsCache.current = d.skills
+      setHubSkills(d.skills)
+    } catch (err) {
+      setHubError('加载 Anthropic Skills 失败: ' + String(err))
+    } finally {
+      setHubLoading(false)
+    }
+  }
 
   const handleInstall = async (url?: string, name?: string) => {
     const targetUrl = url ?? installUrl.trim()
@@ -512,6 +564,28 @@ function SkillsTab() {
       setInstallUrl(''); setInstallName('')
       await reload()
     } catch (err) { setError(String(err)) } finally { setInstalling(false) }
+  }
+
+  // 本地文件安装
+  const handleLocalInstall = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setInstalling(true); setError('')
+    try {
+      // 读取文件内容
+      const content = await file.text()
+      // 上传到后端（使用新的本地安装 API）
+      const skillName = file.name.replace(/\.md$/i, '').replace(/\.txt$/i, '') || 'local-skill'
+      await installLocalSkill(skillName, content)
+      await reload()
+    } catch (err) {
+      setError('本地安装失败: ' + String(err))
+    } finally {
+      setInstalling(false)
+      // 重置 input
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   return (
@@ -544,6 +618,133 @@ function SkillsTab() {
         }
       </section>
 
+      {/* Anthropic Skills Hub */}
+      <section>
+        {!showAnthropic ? (
+          <>
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">Skills Hub</h3>
+            <button
+              onClick={loadAnthropicHub}
+              className="flex items-center gap-3 p-4 rounded-xl border border-nb-border bg-nb-card hover:border-brand-500/50 transition-colors text-left w-full"
+            >
+              <div className="w-10 h-10 rounded-lg bg-orange-500/20 flex items-center justify-center shrink-0">
+                <span className="text-lg">🅰️</span>
+              </div>
+              <div>
+                <p className="text-sm font-medium">Anthropic Skills</p>
+                <p className="text-xs text-nb-text-muted">官方 Skills 仓库 · 点击加载</p>
+              </div>
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted">Anthropic Skills</h3>
+              <button
+                onClick={() => setShowAnthropic(false)}
+                className="text-xs text-nb-text-muted hover:text-nb-text-soft transition-colors"
+              >
+                收起
+              </button>
+            </div>
+
+            {/* 搜索框 */}
+            <div className="flex gap-2 mb-4">
+              <input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') searchAnthropicSkills() }}
+                placeholder="搜索技能名称..."
+                className="flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500"
+              />
+              <button
+                onClick={searchAnthropicSkills}
+                disabled={searching}
+                className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-sm font-medium transition-colors"
+              >
+                {searching ? <Loader2 size={14} className="animate-spin" /> : '搜索'}
+              </button>
+              {searchQuery && (
+                <button
+                  onClick={() => { setSearchQuery(''); loadAnthropicHub() }}
+                  className="px-3 py-2 rounded-xl bg-nb-card border border-nb-border text-nb-text-muted hover:text-nb-text-soft transition-colors"
+                >
+                  清除
+                </button>
+              )}
+            </div>
+
+            {/* 技能列表 */}
+            <div className="space-y-2">
+              {hubLoading || searching ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 size={24} className="animate-spin text-brand-400" />
+                </div>
+              ) : hubError ? (
+                <div className="flex items-start gap-2 text-xs bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-300 dark:border-yellow-800 text-yellow-700 dark:text-yellow-400 rounded-xl px-3 py-2">
+                  <AlertCircle size={13} className="shrink-0 mt-0.5" />{hubError}
+                </div>
+              ) : hubSkills.length === 0 ? (
+                <div className="flex items-center gap-2 text-sm text-nb-text-muted py-4">
+                  <BookOpen size={14} />{searchQuery ? '未找到匹配的技能' : '暂无可用技能'}
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {hubSkills.map(s => {
+                    const installed = skills.some(sk => sk.id.toLowerCase() === s.id.toLowerCase())
+                    return (
+                      <div key={s.id} className="flex items-center justify-between gap-3 bg-nb-card border border-nb-border rounded-2xl px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{s.name}</p>
+                          <p className="text-xs text-nb-text-muted line-clamp-1">{s.description}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <a href={s.url} target="_blank" rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-muted hover:text-nb-text-soft transition-colors"
+                            title="查看源文件">
+                            <ExternalLink size={13} />
+                          </a>
+                          {installed
+                            ? <span className="text-xs text-green-600 dark:text-green-400 font-medium">已安装</span>
+                            : <button onClick={() => handleInstall(s.url, s.id.toLowerCase())} disabled={installing}
+                                className="text-xs px-3 py-1.5 rounded-lg bg-brand-700 hover:bg-brand-600 text-white transition-colors font-medium">
+                                安装
+                              </button>
+                          }
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* 本地安装 */}
+      <section>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">本地安装</h3>
+        <div className="space-y-3">
+          <p className="text-xs text-nb-text-muted">选择本地的 skill.md 文件进行安装</p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".md,.txt"
+            onChange={handleLocalInstall}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={installing}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-nb-card border border-nb-border hover:border-brand-500/50 text-sm font-medium transition-colors"
+          >
+            {installing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            选择文件
+          </button>
+        </div>
+      </section>
+
       {/* 从 URL 安装 */}
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">从链接安装技能</h3>
@@ -566,41 +767,10 @@ function SkillsTab() {
             </div>
           )}
           <button onClick={() => handleInstall()} disabled={!installUrl.trim() || installing}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-sm font-medium transition-colors">
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-sm font-medium transition-colors">
             {installing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
             安装技能
           </button>
-        </div>
-      </section>
-
-      {/* 精选技能 */}
-      <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">精选技能</h3>
-        <div className="space-y-2">
-          {FEATURED_SKILLS.map(s => {
-            const installed = skills.some(sk => sk.name.toLowerCase() === s.name.toLowerCase())
-            return (
-              <div key={s.name} className="flex items-center justify-between gap-3 bg-nb-card border border-nb-border rounded-2xl px-4 py-3">
-                <div>
-                  <p className="text-sm font-medium">{s.name}</p>
-                  <p className="text-xs text-nb-text-muted">{s.description}</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <a href={s.url} target="_blank" rel="noopener noreferrer"
-                    className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-muted hover:text-nb-text-soft transition-colors">
-                    <ExternalLink size={13} />
-                  </a>
-                  {installed
-                    ? <span className="text-xs text-green-600 dark:text-green-400 font-medium">已安装</span>
-                    : <button onClick={() => handleInstall(s.url, s.name.toLowerCase())} disabled={installing}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-brand-700 hover:bg-brand-600 text-white transition-colors font-medium">
-                        安装
-                      </button>
-                  }
-                </div>
-              </div>
-            )
-          })}
         </div>
       </section>
     </div>
@@ -1041,6 +1211,238 @@ function ToggleRow({ icon, title, desc, checked, onChange }: {
   )
 }
 
+// ── Cookies Tab ────────────────────────────────────────────────────────────────
+
+function CookiesTab() {
+  const { t } = useTranslation()
+  const eAPI = (window as any).electronAPI
+
+  const [cookies, setCookies] = useState<CookieItem[]>([])
+  const [domainFilter, setDomainFilter] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [clearing, setClearing] = useState(false)
+
+  // Add cookie form state
+  const [addUrl, setAddUrl] = useState('')
+  const [addName, setAddName] = useState('')
+  const [addValue, setAddValue] = useState('')
+  const [addDomain, setAddDomain] = useState('')
+  const [addPath, setAddPath] = useState('/')
+  const [addSecure, setAddSecure] = useState(false)
+  const [addHttpOnly, setAddHttpOnly] = useState(false)
+  const [addSameSite, setAddSameSite] = useState<string>('lax')
+
+  const loadCookies = useCallback(async (domain?: string) => {
+    if (!eAPI?.getCookies) return
+    setLoading(true)
+    try {
+      const list = await eAPI.getCookies(domain || undefined)
+      setCookies(list)
+    } finally {
+      setLoading(false)
+    }
+  }, [eAPI])
+
+  useEffect(() => { loadCookies(domainFilter || undefined) }, [loadCookies, domainFilter])
+
+  const handleFilter = () => {
+    loadCookies(domainFilter || undefined)
+  }
+
+  const handleDelete = async (url: string, name: string) => {
+    if (!eAPI?.removeCookie) return
+    await eAPI.removeCookie({ url, name })
+    await loadCookies(domainFilter || undefined)
+  }
+
+  const handleClearAll = async () => {
+    if (!eAPI?.clearAllCookies) return
+    setClearing(true)
+    try {
+      await eAPI.clearAllCookies()
+      setCookies([])
+    } finally {
+      setClearing(false)
+    }
+  }
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!eAPI?.setCookie || !addUrl || !addName) return
+    setAdding(true)
+    try {
+      await eAPI.setCookie({
+        url: addUrl, name: addName, value: addValue,
+        domain: addDomain || undefined,
+        path: addPath || '/',
+        secure: addSecure,
+        httpOnly: addHttpOnly,
+        sameSite: addSameSite,
+      })
+      setAddUrl(''); setAddName(''); setAddValue('')
+      setAddDomain(''); setAddPath('/'); setAddSecure(false); setAddHttpOnly(false)
+      setAddSameSite('lax')
+      await loadCookies(domainFilter || undefined)
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const filteredCookies = cookies
+
+  return (
+    <div className="space-y-6">
+      {/* Filter */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 flex items-center gap-2">
+          <Globe size={15} className="text-nb-text-dim shrink-0" />
+          <input
+            type="text"
+            value={domainFilter}
+            onChange={e => setDomainFilter(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleFilter()}
+            placeholder={t('settings.cookieDomainPlaceholder') || '按域名过滤（可选）'}
+            className="flex-1 bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50"
+          />
+        </div>
+        <button onClick={handleFilter} className="px-3 py-2 bg-brand-500/10 hover:bg-brand-500/20 text-brand-500 rounded-lg text-sm font-medium transition-all">
+          {t('settings.filter') || '过滤'}
+        </button>
+        <button
+          onClick={handleClearAll}
+          disabled={clearing || cookies.length === 0}
+          className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+        >
+          {clearing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+          {t('settings.clearAll') || '清空全部'}
+        </button>
+      </div>
+
+      {/* Cookie List */}
+      <div className="border border-nb-border rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-nb-card/60 border-b border-nb-border">
+            <tr>
+              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider">{t('settings.cookieName') || '名称'}</th>
+              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider hidden md:table-cell">{t('settings.cookieDomain') || '域名'}</th>
+              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider hidden lg:table-cell">{t('settings.cookiePath') || '路径'}</th>
+              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider">{t('settings.cookieSecure') || '安全'}</th>
+              <th className="w-10"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-nb-border/50">
+            {loading ? (
+              <tr>
+                <td colSpan={5} className="text-center py-10 text-nb-text-dim">
+                  <Loader2 size={20} className="animate-spin mx-auto" />
+                </td>
+              </tr>
+            ) : filteredCookies.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="text-center py-10 text-nb-text-dim text-sm">
+                  {domainFilter ? (t('settings.noCookiesFiltered') || '没有匹配的 Cookie') : (t('settings.noCookies') || '暂无 Cookie')}
+                </td>
+              </tr>
+            ) : filteredCookies.map((c) => (
+              <tr key={`${c.domain}-${c.path}-${c.name}`} className="hover:bg-nb-card/40 transition-colors">
+                <td className="px-4 py-2.5">
+                  <span className="text-nb-text font-mono text-xs break-all">{c.name}</span>
+                </td>
+                <td className="px-4 py-2.5 text-nb-text-dim text-xs hidden md:table-cell">{c.domain}</td>
+                <td className="px-4 py-2.5 text-nb-text-dim text-xs hidden lg:table-cell">{c.path}</td>
+                <td className="px-4 py-2.5">
+                  {c.secure
+                    ? <span className="text-green-400 text-xs">✓</span>
+                    : <span className="text-nb-text-muted text-xs">—</span>}
+                </td>
+                <td className="px-4 py-2.5">
+                  <button
+                    onClick={() => handleDelete(`https://${c.domain}${c.path}`, c.name)}
+                    className="p-1.5 rounded-lg hover:bg-red-500/15 text-red-400/60 hover:text-red-400 transition-all"
+                    title={t('settings.delete') || '删除'}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Add Cookie Form */}
+      <details className="group">
+        <summary className="flex items-center gap-2 cursor-pointer text-sm font-medium text-nb-text-dim hover:text-nb-text-soft transition-colors list-none">
+          <Plus size={14} />
+          {t('settings.addCookie') || '添加 Cookie'}
+          <span className="ml-auto group-open:rotate-45 transition-transform duration-200">
+            <Plus size={14} />
+          </span>
+        </summary>
+        <form onSubmit={handleAdd} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="md:col-span-2">
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieUrl') || 'URL'} *</label>
+            <input value={addUrl} onChange={e => setAddUrl(e.target.value)} required placeholder="https://example.com"
+              className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
+          </div>
+          <div>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieName') || '名称'} *</label>
+            <input value={addName} onChange={e => setAddName(e.target.value)} required placeholder="session_id"
+              className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
+          </div>
+          <div>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieValue') || '值'} *</label>
+            <input value={addValue} onChange={e => setAddValue(e.target.value)} required placeholder="abc123"
+              className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
+          </div>
+          <div>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieDomain') || '域名'}</label>
+            <input value={addDomain} onChange={e => setAddDomain(e.target.value)} placeholder="example.com"
+              className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
+          </div>
+          <div>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookiePath') || '路径'}</label>
+            <input value={addPath} onChange={e => setAddPath(e.target.value)} placeholder="/"
+              className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
+          </div>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-nb-text-dim">
+              <input type="checkbox" checked={addSecure} onChange={e => setAddSecure(e.target.checked)}
+                className="w-4 h-4 rounded border-nb-border bg-nb-input accent-brand-500" />
+              {t('settings.cookieSecure') || 'Secure'}
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-nb-text-dim">
+              <input type="checkbox" checked={addHttpOnly} onChange={e => setAddHttpOnly(e.target.checked)}
+                className="w-4 h-4 rounded border-nb-border bg-nb-input accent-brand-500" />
+              HttpOnly
+            </label>
+          </div>
+          <div>
+            <label className="block text-xs text-nb-text-dim mb-1">SameSite</label>
+            <select value={addSameSite} onChange={e => setAddSameSite(e.target.value)}
+              className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text focus:outline-none focus:border-brand-500/50">
+              <option value="lax">Lax</option>
+              <option value="strict">Strict</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              disabled={adding}
+              className="w-full px-4 py-2.5 bg-brand-500 hover:bg-brand-400 text-white rounded-xl text-sm font-medium transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+              {t('settings.add') || '添加'}
+            </button>
+          </div>
+        </form>
+      </details>
+    </div>
+  )
+}
+
 function AppearanceTab() {
   const { t, i18n } = useTranslation()
   const eAPI = (window as any).electronAPI
@@ -1186,6 +1588,7 @@ const TABS: { id: Tab; labelKey: string; icon: React.ReactNode }[] = [
   { id: 'memory',     labelKey: 'settings.memory',     icon: <Brain size={15} /> },
   { id: 'categories', labelKey: 'settings.categories', icon: <Bookmark size={15} /> },
   { id: 'appearance', labelKey: 'settings.appearance', icon: <Sparkles size={15} /> },
+  { id: 'cookies',    labelKey: 'settings.cookies',    icon: <Cookie size={15} /> },
 ]
 
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
@@ -1206,45 +1609,48 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     <div
       ref={overlayRef}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+      style={{ background: 'rgba(13,17,23,0.85)', backdropFilter: 'blur(10px)' }}
       onMouseDown={e => { if (e.target === overlayRef.current) onClose() }}
     >
-      <div className="w-full max-w-2xl max-h-[88vh] flex flex-col bg-nb-base rounded-2xl border border-nb-border shadow-2xl overflow-hidden">
+      <div className="w-full max-w-[680px] h-[640px] flex flex-col bg-nb-base rounded-2xl border border-nb-border shadow-2xl overflow-hidden">
         {/* 标题栏 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-nb-border shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-nb-border shrink-0 bg-gradient-to-r from-nb-card/60 to-transparent">
           <h2 className="text-base font-bold flex items-center gap-2.5">
-            <Settings size={18} className="text-brand-400" />
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center shadow-lg shadow-brand-500/20">
+              <Settings size={16} className="text-white" />
+            </div>
             {t('settings.title')}
           </h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-nb-card text-nb-text-dim hover:text-nb-text-soft transition-colors">
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-nb-raised text-nb-text-dim hover:text-nb-text-soft transition-all duration-150 hover:scale-105 active:scale-95">
             <X size={18} />
           </button>
         </div>
 
-        <div className="flex flex-1 min-h-0">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* 左侧导航 */}
-          <div className="w-44 shrink-0 border-r border-nb-border bg-nb-base/50 p-3 space-y-1">
+          <div className="w-48 shrink-0 border-r border-nb-border/40 bg-gradient-to-b from-nb-deepest/50 to-transparent p-4 space-y-1.5 overflow-y-auto scrollbar-thin">
             {TABS.map(tabItem => (
               <button key={tabItem.id} onClick={() => setTab(tabItem.id)}
-                className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left ${
+                className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 text-left border ${
                   tab === tabItem.id
-                    ? 'bg-brand-600/15 text-brand-600 dark:text-brand-300 border border-brand-600/25'
-                    : 'text-nb-text-dim hover:bg-nb-card hover:text-nb-text-soft'
+                    ? 'bg-brand-500/10 text-brand-500 border-brand-500/25 shadow-sm shadow-brand-500/5'
+                    : 'text-nb-text-dim border-transparent hover:text-nb-text-soft hover:bg-nb-card/50'
                 }`}>
-                {tabItem.icon}
+                <span className={tab === tabItem.id ? 'text-brand-500' : ''}>{tabItem.icon}</span>
                 {t(tabItem.labelKey)}
               </button>
             ))}
           </div>
 
           {/* 内容区域 */}
-          <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+          <div className="flex-1 overflow-y-auto p-8 scrollbar-thin">
             {tab === 'model'      && <ModelTab />}
             {tab === 'skills'     && <SkillsTab />}
             {tab === 'mcp'        && <MCPTab />}
             {tab === 'memory'     && <MemoryTab />}
             {tab === 'categories' && <CategoriesTab />}
             {tab === 'appearance' && <AppearanceTab />}
+            {tab === 'cookies'    && <CookiesTab />}
           </div>
         </div>
       </div>
