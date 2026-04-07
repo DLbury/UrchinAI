@@ -1,18 +1,73 @@
 """
-AgentManager: streaming agent loop built directly on LiteLLM.
+AgentManager: streaming agent loop built on nanobot's native providers.
 
 Each chat session gets its own AgentManager instance tied to a BrowserSession.
-We bypass nanobot's non-streaming process_direct and implement our own loop so
-the frontend receives tokens in real time.
+Uses AnthropicProvider / OpenAICompatProvider directly (no LiteLLM dependency).
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, AsyncGenerator
+
+from nanobot.config.loader import load_config
+from nanobot.providers import AnthropicProvider, OpenAICompatProvider, AzureOpenAIProvider
+from nanobot.providers.base import LLMProvider
+
+
+def _migrate_config(data: dict) -> dict:
+    """Migrate legacy config formats to current nanobot schema.
+
+    Handles:
+    - Old field names: apiKey -> api_key, apiBase -> api_base
+    - Old provider names: "ali" -> "dashscope", "zhipu" -> "zhipuai"
+    - Old tools.exec.restrictToWorkspace -> tools.restrictToWorkspace
+    """
+    if not data:
+        return data
+
+    # ── Legacy tools migration ─────────────────────────────────────────────
+    tools = data.get("tools", {})
+    exec_cfg = tools.get("exec", {})
+    if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
+        tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
+
+    # ── Legacy provider migration ─────────────────────────────────────────────
+    LEGACY_PROVIDER_MAP = {
+        "ali": "dashscope",
+        "zhipu": "zhipuai",
+    }
+
+    providers = data.get("providers", {})
+    agents_defaults = data.get("agents", {}).get("defaults", {})
+
+    # Migrate provider configs: apiKey -> api_key, apiBase -> api_base
+    migrated_providers = {}
+    for name, cfg in providers.items():
+        if not isinstance(cfg, dict):
+            continue
+        new_name = LEGACY_PROVIDER_MAP.get(name, name)
+        migrated = {
+            "api_key": cfg.get("apiKey") or cfg.get("api_key", ""),
+            "api_base": cfg.get("apiBase") or cfg.get("api_base"),
+        }
+        if cfg.get("extraHeaders"):
+            migrated["extra_headers"] = cfg["extraHeaders"]
+        # Remove empty values
+        migrated = {k: v for k, v in migrated.items() if v}
+        migrated_providers[new_name] = migrated
+
+    # Update providers dict with migrated entries
+    data["providers"] = migrated_providers
+
+    # Migrate provider name in agent defaults
+    prov = agents_defaults.get("provider", "")
+    if prov in LEGACY_PROVIDER_MAP:
+        agents_defaults["provider"] = LEGACY_PROVIDER_MAP[prov]
+
+    return data
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +102,34 @@ NANOBOT_MEMORY = Path.home() / ".nanobot" / "memory.json"
 
 
 def _build_system_prompt() -> str:
-    """Build system prompt, appending any saved memory entries."""
+    """Build system prompt, appending memory and skills."""
+    parts = [_SYSTEM_PROMPT_BASE]
+
+    # Load memory entries
     try:
         if NANOBOT_MEMORY.exists():
             entries = json.loads(NANOBOT_MEMORY.read_text(encoding="utf-8"))
             if entries:
                 notes = "\n".join(f"- {e.get('content', '')}" for e in entries if e.get("content"))
-                return _SYSTEM_PROMPT_BASE + f"\n\n【用户记忆事项（请在回答时参考）】\n{notes}"
+                parts.append(f"【用户记忆事项（请在回答时参考）】\n{notes}")
     except Exception:
         pass
-    return _SYSTEM_PROMPT_BASE
+
+    # Load skills summary
+    try:
+        from nanobot.agent.skills import SkillsLoader
+        loader = SkillsLoader(NANOBOT_WORKSPACE)
+        summary = loader.build_skills_summary()
+        if summary:
+            parts.append(f"""【可用技能】
+
+以下技能可帮助你完成特定任务：
+
+{summary}""")
+    except Exception as e:
+        logger.debug("Failed to load skills: %s", e)
+
+    return "\n\n".join(parts)
 
 # OpenAI function-call schema for each browser tool
 _BROWSER_TOOL_SCHEMAS: list[dict] = [
@@ -260,49 +333,293 @@ _BROWSER_TOOL_SCHEMAS: list[dict] = [
     },
 ]
 
+_READ_FILE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "read_file",
+        "description": "Read the contents of a file. Returns numbered lines. Use offset and limit to paginate through large files.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "The file path to read"},
+                "offset": {"type": "integer", "description": "Line number to start reading from (1-indexed, default 1)", "minimum": 1},
+                "limit": {"type": "integer", "description": "Maximum number of lines to read (default 2000)", "minimum": 1},
+            },
+            "required": ["path"],
+        },
+    },
+}
 
-def _load_config() -> dict:
-    if NANOBOT_CONFIG.exists():
-        with open(NANOBOT_CONFIG) as f:
-            return json.load(f)
-    return {}
+_WRITE_FILE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "write_file",
+        "description": "Write content to a file at the given path. Creates parent directories if needed.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "The file path to write to"},
+                "content": {"type": "string", "description": "The content to write"},
+            },
+            "required": ["path", "content"],
+        },
+    },
+}
+
+_EDIT_FILE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "edit_file",
+        "description": "Edit a file by replacing old_text with new_text. Supports minor whitespace/line-ending differences. Set replace_all=true to replace every occurrence.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "The file path to edit"},
+                "old_text": {"type": "string", "description": "The text to find and replace"},
+                "new_text": {"type": "string", "description": "The text to replace with"},
+                "replace_all": {"type": "boolean", "description": "Replace all occurrences (default false)"},
+            },
+            "required": ["path", "old_text", "new_text"],
+        },
+    },
+}
+
+_LIST_DIR_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "list_dir",
+        "description": "List the contents of a directory. Set recursive=true to explore nested structure.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "The directory path to list"},
+                "recursive": {"type": "boolean", "description": "Recursively list all files (default false)"},
+                "max_entries": {"type": "integer", "description": "Maximum entries to return (default 200)", "minimum": 1},
+            },
+            "required": ["path"],
+        },
+    },
+}
+
+_EXEC_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "exec",
+        "description": "Execute a shell command and return its output. Use with caution.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The shell command to execute"},
+                "working_dir": {"type": "string", "description": "Optional working directory for the command"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (default 60, max 600)"},
+            },
+            "required": ["command"],
+        },
+    },
+}
 
 
-def _resolve_litellm_model(model: str, provider_name: str, api_base: str | None, api_key: str) -> str:
-    """Return a LiteLLM-compatible model string for the given config."""
-    # If the model already has a provider prefix (e.g. "openai/gpt-4"), use as-is
-    if "/" in model:
-        return model
+# ─────────────────────────────────────────────────────────────────────────────
+# Browser tool adapter — wraps BrowserTools methods as nanobot Tool instances
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # Known nanobot provider → known LiteLLM prefix
-    _KNOWN_PREFIXES: dict[str, str] = {
-        "openai": "",           # no prefix needed
-        "anthropic": "anthropic",
-        "deepseek": "deepseek",
-        "gemini": "gemini",
-        "zhipu": "zai",
-        "dashscope": "dashscope",
-        "moonshot": "moonshot",
-        "minimax": "minimax",
-        "siliconflow": "openai",  # OpenAI-compat gateway
-        "aihubmix": "openai",
-        "volcengine": "volcengine",
-        "groq": "groq",
-        "openrouter": "openrouter",
-        "vllm": "hosted_vllm",
-    }
-    prefix = _KNOWN_PREFIXES.get(provider_name)
-    if prefix is not None:
-        if prefix:
-            return f"{prefix}/{model}"
-        return model  # openai: no prefix
+from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.registry import ToolRegistry
 
-    # Unknown / custom provider with a custom api_base → treat as OpenAI-compat
-    if api_base:
-        os.environ["OPENAI_API_KEY"] = api_key
-        return f"openai/{model}"
 
-    return model
+class BrowserToolAdapter(Tool):
+    """Adapter that exposes a BrowserTools method as a nanobot Tool."""
+
+    def __init__(self, name: str, description: str, parameters: dict, fn):
+        self._name = name
+        self._description = description
+        self._parameters = parameters
+        self._fn = fn
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def parameters(self) -> dict:
+        return self._parameters
+
+    async def execute(self, **kwargs: Any) -> Any:
+        return await self._fn(**kwargs)
+
+
+# Lazy browser tools instance (created once per streaming session)
+_browser_tools_instance: "BrowserTools | None" = None
+
+
+def _get_browser_tools():
+    """Get or create the BrowserTools singleton."""
+    global _browser_tools_instance
+    if _browser_tools_instance is None:
+        # Import locally to avoid cross-package import issues when running as script
+        import sys
+        from pathlib import Path
+        # Ensure backend/agent is importable
+        agent_dir = Path(__file__).parent
+        backend_dir = agent_dir.parent
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        from agent.browser_tool import BrowserTools
+        _browser_tools_instance = BrowserTools()
+    return _browser_tools_instance
+
+
+def _build_browser_tool_registry() -> tuple[ToolRegistry, list[dict]]:
+    """Build a ToolRegistry with all browser tools + filesystem tools registered."""
+    registry = ToolRegistry()
+    browser = _get_browser_tools()
+
+    # Map schema name → method name
+    _TOOL_METHODS = [
+        ("browser_navigate", "browser_navigate"),
+        ("browser_click", "browser_click"),
+        ("browser_type", "browser_type"),
+        ("browser_get_text", "browser_get_text"),
+        ("browser_get_url", "browser_get_url"),
+        ("browser_scroll", "browser_scroll"),
+        ("browser_evaluate", "browser_evaluate"),
+        ("browser_new_tab", "browser_new_tab"),
+        ("browser_close_tab", "browser_close_tab"),
+        ("browser_list_tabs", "browser_list_tabs"),
+        ("browser_switch_tab", "browser_switch_tab"),
+        ("browser_get_dom", "browser_get_dom"),
+        ("browser_press_key", "browser_press_key"),
+        ("browser_screenshot", "browser_screenshot"),
+        ("browser_get_page_content", "browser_get_page_content"),
+    ]
+
+    # Build name → schema map
+    schema_map = {s["function"]["name"]: s["function"] for s in _BROWSER_TOOL_SCHEMAS}
+
+    for tool_name, method_name in _TOOL_METHODS:
+        schema = schema_map.get(tool_name)
+        if schema and hasattr(browser, method_name):
+            adapter = BrowserToolAdapter(
+                name=schema["name"],
+                description=schema.get("description", ""),
+                parameters=schema.get("parameters", {}),
+                fn=getattr(browser, method_name),
+            )
+            registry.register(adapter)
+
+    # Register filesystem tools (read/write/edit/list for workspace files)
+    try:
+        from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
+        for tool_cls in [ReadFileTool, WriteFileTool, EditFileTool, ListDirTool]:
+            try:
+                registry.register(tool_cls(workspace=NANOBOT_WORKSPACE, allowed_dir=NANOBOT_WORKSPACE))
+            except Exception:
+                registry.register(tool_cls())
+    except Exception as e:
+        logger.warning("Failed to register filesystem tools: %s", e)
+
+    # Register shell execution tool
+    try:
+        from nanobot.agent.tools.shell import ExecTool
+        exec_tool = ExecTool(
+            working_dir=str(NANOBOT_WORKSPACE),
+            restrict_to_workspace=False,
+        )
+        registry.register(exec_tool)
+    except Exception as e:
+        logger.warning("Failed to register exec tool: %s", e)
+
+    # Register web tools (web_search, web_fetch)
+    extra_schemas: list[dict] = []
+    try:
+        from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+        ws = WebSearchTool()
+        registry.register(ws)
+        extra_schemas.append({"type": "function", "function": {"name": ws.name, "description": ws.description, "parameters": ws.parameters}})
+
+        wf = WebFetchTool()
+        registry.register(wf)
+        extra_schemas.append({"type": "function", "function": {"name": wf.name, "description": wf.description, "parameters": wf.parameters}})
+    except Exception as e:
+        logger.warning("Failed to register web tools: %s", e)
+
+    return registry, extra_schemas
+
+
+def _create_nanobot_provider(cfg=None) -> tuple[LLMProvider, str, str]:
+    """Create nanobot LLM provider from config.
+
+    Returns (provider, model, provider_name).
+    Raises ValueError if no valid config found.
+    """
+    import json
+
+    if cfg is None:
+        # Load raw JSON and apply legacy migration
+        if NANOBOT_CONFIG.exists():
+            with open(NANOBOT_CONFIG, encoding="utf-8") as f:
+                raw = json.load(f)
+        else:
+            raw = {}
+
+        # Apply legacy migrations (preserves unknown providers like 'minimax-bendi')
+        raw = _migrate_config(raw)
+        # Keep raw migrated providers before Pydantic strips unknown fields
+        migrated_providers = raw.get("providers", {})
+
+        # Build Config from migrated dict (bypass file re-read)
+        from nanobot.config.schema import Config
+        cfg = Config.model_validate(raw)
+    else:
+        migrated_providers = {}
+
+    defaults = cfg.agents.defaults
+    provider_name = cfg.get_provider_name(defaults.model) or defaults.provider
+    model = defaults.model
+
+    # Try to get provider config by model first, then by provider name as fallback
+    provider_cfg = cfg.get_provider(model)
+    if provider_cfg is None and provider_name:
+        # Provider may not be in nanobot's registry — look it up in raw migrated config
+        provider_cfg = migrated_providers.get(provider_name)
+
+    api_key = (provider_cfg.api_key if hasattr(provider_cfg, 'api_key') else provider_cfg.get("api_key", "")) if provider_cfg else ""
+    api_base = (provider_cfg.api_base if hasattr(provider_cfg, 'api_base') else provider_cfg.get("api_base", "")) if provider_cfg else ""
+    if not api_base:
+        api_base = cfg.get_api_base(model) or ""
+
+    if not model:
+        raise ValueError("未配置模型，请在设置中选择模型。")
+    if not api_key and not api_base:
+        raise ValueError("未找到有效的服务商配置，请在设置中配置 API Key。")
+
+    # Create provider based on provider name
+    if provider_name == "anthropic":
+        provider = AnthropicProvider(
+            api_key=api_key,
+            api_base=api_base,
+            default_model=model,
+        )
+    elif provider_name == "azure_openai":
+        provider = AzureOpenAIProvider(
+            api_key=api_key,
+            api_base=api_base,
+            default_model=model,
+        )
+    else:
+        # OpenAI-compatible (openrouter, deepseek, dashscope, openai, siliconflow, etc.)
+        provider = OpenAICompatProvider(
+            api_key=api_key,
+            api_base=api_base,
+            default_model=model,
+        )
+
+    logger.info("Using provider: %s, model: %s", provider_name, model)
+    return provider, model, provider_name
 
 
 class AgentMessage:
@@ -319,8 +636,60 @@ class AgentMessage:
         return d
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Streaming hook — nanobot AgentHook-compatible interface for streaming output
+# ─────────────────────────────────────────────────────────────────────────────
+
+from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.runner import AgentRunSpec, AgentRunResult
+
+
+class StreamingAgentHook(AgentHook):
+    """
+    AgentHook that intercepts token stream and tool execution for the Electron UI.
+
+    Implements nanobot's AgentHook interface so it can be used with AgentRunner,
+    while also providing a standalone streaming mode via process_streaming().
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._response_content = ""
+        self._tool_results: dict[str, tuple[str, Any]] = {}  # call_id -> (name, result)
+
+    def wants_streaming(self) -> bool:
+        return True
+
+    async def on_stream(self, context: AgentHookContext, delta: str) -> None:
+        """Called for each text delta during streaming."""
+        self._response_content += delta
+
+    async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
+        """Called when streaming of a response ends."""
+        pass
+
+    async def before_execute_tools(self, context: AgentHookContext) -> None:
+        """Called before executing tool calls."""
+        pass
+
+    async def after_iteration(self, context: AgentHookContext) -> None:
+        """Called after each agent iteration."""
+        pass
+
+    def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
+        """Called to finalize the response content."""
+        return content
+
+    def get_content(self) -> str:
+        return self._response_content
+
+    def clear(self) -> None:
+        self._response_content = ""
+        self._tool_results.clear()
+
+
 class AgentManager:
-    """Streaming LiteLLM agent loop for one session (Electron edition).
+    """Streaming agent loop for one session (Electron edition).
 
     browser_page is ignored — browser control goes through the Electron HTTP bridge.
     """
@@ -329,7 +698,7 @@ class AgentManager:
         self.session_id = session_id
         self.browser_page = browser_page  # kept for API compat, unused in Electron
         self._history: list[dict] = []
-        self._litellm_error: str | None = None  # 记录 litellm 加载失败原因
+        self._provider_error: str | None = None  # 记录 provider 加载失败原因
         self._nanobot_available = self._check_nanobot()
         self._stop_requested: bool = False  # 停止标志
 
@@ -338,25 +707,50 @@ class AgentManager:
         self._stop_requested = True
 
     def _check_nanobot(self) -> bool:
-        """Check if litellm is available. Captures all exceptions for diagnosis."""
+        """Check if nanobot providers are available. Captures all exceptions for diagnosis."""
         try:
-            import litellm  # noqa: F401
-            logger.info("litellm loaded OK: %s", litellm.__file__)
+            from nanobot.config.loader import load_config
+            from nanobot.providers import AnthropicProvider, OpenAICompatProvider
+            logger.info("nanobot providers loaded OK")
             return True
         except ImportError as e:
-            self._litellm_error = str(e)
-            logger.error("litellm ImportError: %s", e)
+            self._provider_error = str(e)
+            logger.error("nanobot ImportError: %s", e)
             return False
         except Exception as e:
-            # PyInstaller 环境下可能抛出非 ImportError 的异常
-            self._litellm_error = f"{type(e).__name__}: {e}"
-            logger.error("litellm failed to load: %s: %s", type(e).__name__, e, exc_info=True)
+            self._provider_error = f"{type(e).__name__}: {e}"
+            logger.error("nanobot failed to load: %s: %s", type(e).__name__, e, exc_info=True)
             return False
 
-    async def chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
+    async def chat(self, user_message: str, files: list = None) -> AsyncGenerator[AgentMessage, None]:
         """Stream agent responses for a user message."""
         self._stop_requested = False  # 重置停止标志
-        self._history.append({"role": "user", "content": user_message})
+
+        logger.info("[DEBUG] manager.chat called: user_message='%s', files=%s",
+                    user_message[:100] if user_message else "", files[:1] if files else "none")
+
+        # 构建用户消息内容（支持图片）
+        if files:
+            # 构建结构化的 content 数组（用于 Vision LLM）
+            content = []
+            if user_message:
+                content.append({"type": "text", "text": user_message})
+            for f in files:
+                file_type = f.get("type", "")
+                data = f.get("data", "")
+                if file_type.startswith("image/") and data:
+                    # 图片使用 image_url 类型
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": data}  # data 已经是 data:image/jpeg;base64,... 格式
+                    })
+                else:
+                    # 非图片用 text 类型
+                    name = f.get("name", "unnamed")
+                    content.append({"type": "text", "text": f"[附件: {name}]"})
+            self._history.append({"role": "user", "content": content})
+        else:
+            self._history.append({"role": "user", "content": user_message})
 
         if self._nanobot_available:
             async for msg in self._streaming_chat():
@@ -366,39 +760,23 @@ class AgentManager:
                 yield msg
 
     async def _streaming_chat(self) -> AsyncGenerator[AgentMessage, None]:
-        """Streaming agent loop using LiteLLM directly."""
-        import litellm
-        litellm.suppress_debug_info = True
-        litellm.drop_params = True
+        """Streaming agent loop using nanobot's native providers."""
 
-        cfg = _load_config()
-        defaults = cfg.get("agents", {}).get("defaults", {})
-        provider_name: str = defaults.get("provider", "")
-        model: str = defaults.get("model", "")
-
-        providers_map: dict = cfg.get("providers", {})
-        provider_cfg: dict = providers_map.get(provider_name, {})
-        if not provider_cfg and providers_map:
-            provider_name, provider_cfg = next(iter(providers_map.items()))
-
-        api_key: str = provider_cfg.get("apiKey", "") or ""
-        api_base: str | None = provider_cfg.get("apiBase", "") or None
-
-        if not model:
-            yield AgentMessage("error", "未配置模型，请在设置中选择模型。")
+        # Create provider from nanobot config
+        try:
+            provider, model, provider_name = _create_nanobot_provider()
+        except ValueError as e:
+            yield AgentMessage("error", str(e))
             return
-        if not api_key and not api_base:
-            yield AgentMessage("error", "未找到有效的服务商配置，请在设置中配置 API Key。")
+        except Exception as e:
+            logger.exception("Failed to create provider")
+            yield AgentMessage("error", f"Provider 创建失败：{e}")
             return
 
-        resolved_model = _resolve_litellm_model(model, provider_name, api_base, api_key)
-        logger.info("Using model: %s (resolved: %s)", model, resolved_model)
-
-        # Browser tools available when a page is attached
-        # In Electron edition, browser tools always go through the HTTP bridge
-        from agent.browser_tool import BrowserTools
-        browser_tools_obj = BrowserTools()
-        tools = _BROWSER_TOOL_SCHEMAS
+        # Browser tools registered in nanobot ToolRegistry
+        browser_registry, extra_tool_schemas = _build_browser_tool_registry()
+        # Raw schemas still needed for the LLM provider (registry handles execution)
+        tools = [*_BROWSER_TOOL_SCHEMAS, _READ_FILE_SCHEMA, _WRITE_FILE_SCHEMA, _EDIT_FILE_SCHEMA, _LIST_DIR_SCHEMA, _EXEC_SCHEMA, *extra_tool_schemas]
 
         # Build messages: system (with memory) + history (already includes latest user turn)
         messages: list[dict] = [{"role": "system", "content": _build_system_prompt()}] + self._history
@@ -406,114 +784,139 @@ class AgentManager:
         max_iterations = 15
         assistant_content = ""
 
+        # Streaming infrastructure
+        token_queue: asyncio.Queue[str] = asyncio.Queue()
+        # Event for responsive stop detection
+        stop_event = asyncio.Event()
+
+        async def token_callback(delta: str) -> None:
+            """Called by provider for each streaming token delta."""
+            await token_queue.put(delta)
+
+        # Mirror _stop_requested to our Event for responsiveness
+        def _on_stop():
+            stop_event.set()
+
+        original_stop = self.stop
+        self.stop = lambda: (_on_stop(), original_stop())
+
+        async def _check_stop() -> bool:
+            """Check if stop was requested. Returns True if should stop."""
+            if self._stop_requested or stop_event.is_set():
+                return True
+            return False
+
+
         try:
-            for _ in range(max_iterations):
-                # ── Streaming LLM call ────────────────────────────────────────
-                call_kwargs: dict[str, Any] = {
-                    "model": resolved_model,
-                    "messages": messages,
-                    "stream": True,
-                    "temperature": 0.1,
-                    "max_tokens": 4096,
-                    "api_key": api_key,
-                }
-                if api_base:
-                    call_kwargs["api_base"] = api_base
-                if tools:
-                    call_kwargs["tools"] = tools
-                    call_kwargs["tool_choice"] = "auto"
-                    # Force single tool call per round to prevent ordering bugs
-                    # (e.g. click before type causing empty-form submissions)
-                    call_kwargs["parallel_tool_calls"] = False
+            for iteration in range(max_iterations):
+                # Check stop before each iteration
+                if await _check_stop():
+                    yield AgentMessage("error", "已停止生成")
+                    return
 
+                # Drain any remaining tokens from previous iteration
+                while not token_queue.empty():
+                    try:
+                        token_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+
+                # ── Streaming LLM call via nanobot provider ──────────────────
+                stop_event.clear()
+
+                # Run chat_stream in background so we can yield tokens as they arrive
+                stream_task = asyncio.create_task(
+                    provider.chat_stream(
+                        messages=messages,
+                        tools=tools,
+                        model=model,
+                        max_tokens=4096,
+                        temperature=0.1,
+                        on_content_delta=token_callback,
+                    )
+                )
+
+                # Drain tokens from queue WHILE stream is running (concurrent)
                 response_content = ""
-                # Accumulate streaming tool calls: {index: {id, name, args_str}}
-                pending_tool_calls: dict[int, dict] = {}
-
-                stream = await litellm.acompletion(**call_kwargs)
-                async for chunk in stream:
-                    # 检查停止请求
-                    if self._stop_requested:
-                        yield AgentMessage("error", "已停止生成")
-                        return
-
-                    if not chunk.choices:
+                while not stop_event.is_set():
+                    try:
+                        token = await asyncio.wait_for(token_queue.get(), timeout=0.05)
+                        response_content += token
+                        assistant_content += token
+                        yield AgentMessage("token", token)
+                    except asyncio.TimeoutError:
+                        if stream_task.done():
+                            break
                         continue
-                    delta = chunk.choices[0].delta
 
-                    # Text tokens
-                    if delta.content:
-                        response_content += delta.content
-                        assistant_content += delta.content
-                        yield AgentMessage("token", delta.content)
+                # Grab any remaining tokens
+                while not token_queue.empty():
+                    try:
+                        token = token_queue.get_nowait()
+                        response_content += token
+                        assistant_content += token
+                        yield AgentMessage("token", token)
+                    except asyncio.QueueEmpty:
+                        break
 
-                    # Tool call chunks
-                    if delta.tool_calls:
-                        for tc_chunk in delta.tool_calls:
-                            idx = tc_chunk.index
-                            if idx not in pending_tool_calls:
-                                pending_tool_calls[idx] = {
-                                    "id": tc_chunk.id or "",
-                                    "name": "",
-                                    "args_str": "",
-                                }
-                            entry = pending_tool_calls[idx]
-                            if tc_chunk.id:
-                                entry["id"] = tc_chunk.id
-                            if tc_chunk.function:
-                                if tc_chunk.function.name:
-                                    entry["name"] += tc_chunk.function.name
-                                if tc_chunk.function.arguments:
-                                    entry["args_str"] += tc_chunk.function.arguments
+                # Get the final LLM response
+                try:
+                    if not stream_task.done():
+                        stream_task.cancel()
+                    response = stream_task.result()
+                except (asyncio.CancelledError, asyncio.InvalidStateError):
+                    response = type("obj", (object,), {"has_tool_calls": False, "content": response_content})()
+                except Exception:
+                    response = type("obj", (object,), {"has_tool_calls": False, "content": response_content})()
 
-                # 检查停止请求（streaming 结束后）
-                if self._stop_requested:
+                # Final immediate drain - grab any remaining tokens
+                while not token_queue.empty():
+                    try:
+                        token = token_queue.get_nowait()
+                        response_content += token
+                        assistant_content += token
+                        yield AgentMessage("token", token)
+                    except asyncio.QueueEmpty:
+                        break
+
+                # Check stop after streaming
+                if await _check_stop():
                     yield AgentMessage("error", "已停止生成")
                     return
 
                 # ── If no tool calls, we're done ─────────────────────────────
-                if not pending_tool_calls:
+                if not response.has_tool_calls:
                     messages.append({"role": "assistant", "content": response_content})
                     break
 
                 # ── Execute tool calls ────────────────────────────────────────
-                # Add assistant turn with tool_calls
-                tool_call_list = []
-                for entry in pending_tool_calls.values():
-                    tool_call_list.append({
-                        "id": entry["id"],
-                        "type": "function",
-                        "function": {
-                            "name": entry["name"],
-                            "arguments": entry["args_str"],
-                        },
-                    })
+                tool_call_list = [
+                    tc.to_openai_tool_call() for tc in response.tool_calls
+                ]
                 messages.append({
                     "role": "assistant",
                     "content": response_content or None,
                     "tool_calls": tool_call_list,
                 })
 
-                for entry in pending_tool_calls.values():
-                    call_id = entry["id"]
-                    tool_name = entry["name"]
-                    try:
-                        args = json.loads(entry["args_str"] or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
+                for tc in response.tool_calls:
+                    call_id = tc.id
+                    tool_name = tc.name
+                    args = tc.arguments
 
                     yield AgentMessage("tool_call", tool_name,
                                        args=args, call_id=call_id, name=tool_name)
 
-                    # Execute
-                    if browser_tools_obj and hasattr(browser_tools_obj, tool_name):
-                        try:
-                            fn = getattr(browser_tools_obj, tool_name)
-                            result = await fn(**args)
-                        except Exception as exc:
-                            result = f"Tool error: {exc}"
-                    else:
-                        result = f"Tool '{tool_name}' not available."
+                    # Check stop before executing tool
+                    if await _check_stop():
+                        yield AgentMessage("error", "已停止生成")
+                        return
+
+                    # Execute via ToolRegistry
+                    try:
+                        result = await browser_registry.execute(tool_name, args)
+                    except Exception as exc:
+                        result = f"Tool error: {exc}"
 
                     # Truncate screenshot base64 in the UI message
                     ui_result = result
@@ -524,7 +927,7 @@ class AgentManager:
                     yield AgentMessage("tool_result", ui_result,
                                        call_id=call_id, name=tool_name)
 
-                    # For screenshot results, inject as vision content for LLMs that support it
+                    # For screenshot results, inject as vision content
                     if isinstance(result, str) and result.startswith("screenshot:") and "data:image/jpeg;base64," in result:
                         b64_data = result.split("data:image/jpeg;base64,", 1)[1]
                         tool_content: Any = [
@@ -545,17 +948,19 @@ class AgentManager:
             logger.exception("Streaming chat error")
             yield AgentMessage("error", f"模型调用失败：{exc}")
             return
+        finally:
+            self.stop = original_stop
 
         self._history.append({"role": "assistant", "content": assistant_content})
         yield AgentMessage("done", assistant_content)
 
     async def _fallback_chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
-        """Simple fallback when litellm is not available."""
-        error_detail = f"\n\n错误详情：{self._litellm_error}" if self._litellm_error else ""
+        """Simple fallback when nanobot providers are not available."""
+        error_detail = f"\n\n错误详情：{self._provider_error}" if self._provider_error else ""
         reply = (
-            "[litellm 未安装或加载失败，无法调用大模型]\n\n"
+            "[nanobot providers 未安装或加载失败，无法调用大模型]\n\n"
             f"你说：{user_message}\n\n"
-            f"请安装 litellm 并配置 ~/.nanobot/config.json 启用 AI 回复。{error_detail}"
+            f"请安装 nanobot-ai 并配置 ~/.nanobot/config.json 启用 AI 回复。{error_detail}"
         )
         for word in reply.split(" "):
             yield AgentMessage("token", word + " ")

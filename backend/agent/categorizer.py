@@ -5,15 +5,10 @@ Provides intelligent categorization for bookmarks based on URL and title.
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-NANOBOT_CONFIG = Path.home() / ".nanobot" / "config.json"
 
 # Default preset categories
 DEFAULT_CATEGORIES = [
@@ -30,49 +25,52 @@ DEFAULT_CATEGORIES = [
 ]
 
 
-def _load_config() -> dict:
-    """Load configuration from ~/.nanobot/config.json."""
-    if NANOBOT_CONFIG.exists():
-        try:
-            with open(NANOBOT_CONFIG) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+def _create_categorizer_provider() -> tuple[Any, str, str] | None:
+    """Create nanobot LLM provider for categorization. Returns (provider, model, provider_name) or None."""
+    try:
+        from nanobot.providers import AnthropicProvider, OpenAICompatProvider, AzureOpenAIProvider
+    except ImportError:
+        return None
 
+    import json as _json
+    from pathlib import Path
+    _cfg_path = Path.home() / ".nanobot" / "config.json"
+    if not _cfg_path.exists():
+        return None
+    try:
+        raw = _json.loads(_cfg_path.read_text())
+    except Exception:
+        return None
 
-def _resolve_litellm_model(model: str, provider_name: str, api_base: str | None, api_key: str) -> str:
-    """Return a LiteLLM-compatible model string for the given config."""
-    if "/" in model:
-        return model
+    # Legacy migration (ali->dashscope, apiKey->api_key)
+    LEGACY = {"ali": "dashscope", "zhipu": "zhipuai"}
+    providers_raw = {}
+    for name, v in raw.get("providers", {}).items():
+        new_name = LEGACY.get(name, name)
+        providers_raw[new_name] = {
+            "api_key": v.get("apiKey") or v.get("api_key", ""),
+            "api_base": v.get("apiBase") or v.get("api_base", ""),
+        }
 
-    _KNOWN_PREFIXES: dict[str, str] = {
-        "openai": "",
-        "anthropic": "anthropic",
-        "deepseek": "deepseek",
-        "gemini": "gemini",
-        "zhipu": "zai",
-        "dashscope": "dashscope",
-        "moonshot": "moonshot",
-        "minimax": "minimax",
-        "siliconflow": "openai",
-        "aihubmix": "openai",
-        "volcengine": "volcengine",
-        "groq": "groq",
-        "openrouter": "openrouter",
-        "vllm": "hosted_vllm",
-    }
-    prefix = _KNOWN_PREFIXES.get(provider_name)
-    if prefix is not None:
-        if prefix:
-            return f"{prefix}/{model}"
-        return model
+    defaults = raw.get("agents", {}).get("defaults", {})
+    provider_name = defaults.get("provider", "")
+    model = defaults.get("model", "")
 
-    if api_base:
-        os.environ["OPENAI_API_KEY"] = api_key
-        return f"openai/{model}"
+    provider_cfg = providers_raw.get(provider_name, {})
+    api_key = provider_cfg.get("api_key", "")
+    api_base = provider_cfg.get("api_base", "")
 
-    return model
+    if not model or (not api_key and not api_base):
+        return None
+
+    if provider_name == "anthropic":
+        provider = AnthropicProvider(api_key=api_key, api_base=api_base, default_model=model)
+    elif provider_name == "azure_openai":
+        provider = AzureOpenAIProvider(api_key=api_key, api_base=api_base, default_model=model)
+    else:
+        provider = OpenAICompatProvider(api_key=api_key, api_base=api_base, default_model=model)
+
+    return provider, model, provider_name
 
 
 async def categorize_bookmark(url: str, title: str, categories: list[dict]) -> str:
@@ -87,33 +85,6 @@ async def categorize_bookmark(url: str, title: str, categories: list[dict]) -> s
     Returns:
         Category ID (falls back to "other" on failure)
     """
-    try:
-        import litellm
-        litellm.suppress_debug_info = True
-        litellm.drop_params = True
-    except ImportError:
-        logger.warning("litellm not available, using fallback categorization")
-        return _fallback_categorize(url, categories)
-
-    cfg = _load_config()
-    defaults = cfg.get("agents", {}).get("defaults", {})
-    provider_name: str = defaults.get("provider", "")
-    model: str = defaults.get("model", "")
-
-    providers_map: dict = cfg.get("providers", {})
-    provider_cfg: dict = providers_map.get(provider_name, {})
-    if not provider_cfg and providers_map:
-        provider_name, provider_cfg = next(iter(providers_map.items()))
-
-    api_key: str = provider_cfg.get("apiKey", "") or ""
-    api_base: str | None = provider_cfg.get("apiBase", "") or None
-
-    if not model or (not api_key and not api_base):
-        logger.warning("No model or API key configured, using fallback categorization")
-        return _fallback_categorize(url, categories)
-
-    resolved_model = _resolve_litellm_model(model, provider_name, api_base, api_key)
-
     # Build category list for prompt
     cat_list = ", ".join(f"{c['id']} ({c['name']})" for c in categories)
 
@@ -127,18 +98,20 @@ URL: {url}
 只返回分类的 id（如 work、study 等），不要其他内容。"""
 
     try:
-        call_kwargs: dict[str, Any] = {
-            "model": resolved_model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0,
-            "max_tokens": 20,
-            "api_key": api_key,
-        }
-        if api_base:
-            call_kwargs["api_base"] = api_base
+        provider_info = _create_categorizer_provider()
+        if provider_info is None:
+            logger.warning("No nanobot provider available, using fallback categorization")
+            return _fallback_categorize(url, categories)
 
-        response = await litellm.acompletion(**call_kwargs)
-        content = response.choices[0].message.content.strip().lower()
+        provider, model, provider_name = provider_info
+
+        response = await provider.chat(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            temperature=0,
+            max_tokens=20,
+        )
+        content = response.content.strip().lower() if response.content else ""
 
         # Validate response is a valid category
         valid_ids = {c["id"] for c in categories}

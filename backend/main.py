@@ -36,6 +36,7 @@ from api.history import router as history_router
 from api.memory import router as memory_router
 from api.scripts import router as scripts_router
 from api.category import router as category_router
+from api.chat_sessions import router as chat_sessions_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ app.include_router(history_router)
 app.include_router(memory_router)
 app.include_router(scripts_router)
 app.include_router(category_router)
+app.include_router(chat_sessions_router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -72,15 +74,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     except Exception as e:
         logger.error("Failed to accept WebSocket: %s", e)
         return
-
-    # 诊断：在 ws handler 里直接测试 litellm 导入
-    try:
-        import litellm
-        logger.info("[diag] litellm OK: %s", litellm.__file__)
-    except ImportError as e:
-        logger.error("[diag] litellm ImportError at ws handler: %s", e)
-    except Exception as e:
-        logger.error("[diag] litellm FAIL at ws handler: %s: %s", type(e).__name__, e, exc_info=True)
 
     try:
         from agent.manager import get_or_create_manager
@@ -105,11 +98,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
             if msg_type == "chat":
                 content = data.get("content", "").strip()
-                if not content:
+                files = data.get("files", [])
+                logger.info("[DEBUG] chat message received: content='%s', files_count=%d, files=%s",
+                            content[:100] if content else "", len(files) if files else 0, files[:1] if files else "none")
+                if not content and not files:
                     continue
 
                 async def send_chat():
-                    async for msg in manager.chat(content):
+                    async for msg in manager.chat(content, files=files):
                         await websocket.send_text(json.dumps(msg.to_dict()))
 
                 chat_task = asyncio.create_task(send_chat())
@@ -148,15 +144,5 @@ async def health():
 
 # Entry point for PyInstaller / bundled executable
 if __name__ == "__main__":
-    # 启动时诊断 litellm 加载状态
-    logger.info("=== DIAGNOSTIC: Testing litellm import ===")
-    try:
-        import litellm
-        logger.info("=== DIAGNOSTIC: litellm loaded OK, file=%s ===", litellm.__file__)
-    except ImportError as e:
-        logger.error("=== DIAGNOSTIC: litellm ImportError: %s ===", e)
-    except Exception as e:
-        logger.error("=== DIAGNOSTIC: litellm failed: %s: %s ===", type(e).__name__, e, exc_info=True)
-
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)
