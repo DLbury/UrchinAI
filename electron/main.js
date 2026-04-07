@@ -26,12 +26,13 @@ let mainWindow  = null
 let backendProc = null
 let adBlockEnabled = true
 
-// Active webview's webContentsId (set by renderer whenever tab changes)
-let activeWebContentsId = null
+// Active webview per renderer window (set by renderer whenever tab changes)
+// key: BrowserWindow.webContents.id (renderer) -> value: webview guest webContentsId
+const activeWebContentsByWindow = new Map()
 
 // ─── Nanobot Agent FX (injected into webviews) ────────────────────────────────
 
-let fxEnabled = true   // toggled from SettingsModal
+let fxEnabled = false  // toggled from SettingsModal
 
 const NANOBOT_FX_SCRIPT = `
 (function() {
@@ -265,9 +266,9 @@ async function fxCursorPos(wc) {
   } catch (_) { return null }
 }
 
-// Tab state cache (updated by renderer, consumed by bridge /list-tabs)
-let tabStateCache = []
-let activeTabIdCache = null
+// Tab state cache per renderer window (updated by renderer, consumed by bridge /tabs)
+// key: BrowserWindow.webContents.id (renderer) -> { tabs, activeId }
+const tabStateByWindow = new Map()
 
 // ─── Sessions ────────────────────────────────────────────────────────────────
 
@@ -453,8 +454,11 @@ function stopBackend() {
 // ─── HTTP bridge (Python → webview control) ──────────────────────────────────
 
 function getActiveWc() {
-  if (!activeWebContentsId) return null
-  try { return webContents.fromId(activeWebContentsId) } catch (_) { return null }
+  const focused = BrowserWindow.getFocusedWindow() || mainWindow
+  const rendererWcId = focused?.webContents?.id
+  const activeId = rendererWcId ? activeWebContentsByWindow.get(rendererWcId) : null
+  if (!activeId) return null
+  try { return webContents.fromId(activeId) } catch (_) { return null }
 }
 
 function startBridgeServer() {
@@ -725,10 +729,15 @@ function startBridgeServer() {
 
         // ── Tab: list ───────────────────────────────────────────────────
         } else if (req.method === 'GET' && req.url === '/tabs') {
+          const focused = BrowserWindow.getFocusedWindow() || mainWindow
+          const rendererWcId = focused?.webContents?.id
+          const state = rendererWcId ? tabStateByWindow.get(rendererWcId) : null
+          const tabs = state?.tabs || []
+          const activeId = state?.activeId || null
           res.end(JSON.stringify({
-            tabs: tabStateCache.map(t => ({
+            tabs: tabs.map(t => ({
               id: t.id, title: t.title, url: t.url,
-              isActive: t.id === activeTabIdCache,
+              isActive: t.id === activeId,
             }))
           }))
 
@@ -873,13 +882,22 @@ function sendWebSocketMessage(sessionId, data) {
 // ─── IPC ─────────────────────────────────────────────────────────────────────
 
 function registerIpc() {
-  // Renderer notifies main which webview is active (by webContentsId)
-  ipcMain.handle('webview:setActive', (_e, id) => { activeWebContentsId = id })
+  // ── Window controls (frameless mode) ────────────────────────────────────────
+  ipcMain.handle('window:minimize',     () => mainWindow?.minimize())
+  ipcMain.handle('window:maximize',     () => {
+    if (mainWindow?.isMaximized()) mainWindow.unmaximize()
+    else mainWindow?.maximize()
+  })
+  ipcMain.handle('window:close',        () => mainWindow?.close())
+  ipcMain.handle('window:isMaximized',  () => mainWindow?.isMaximized() ?? false)
 
-  // Renderer syncs tab state so bridge /list-tabs has fresh data
-  ipcMain.handle('webview:updateState', (_e, state) => {
-    tabStateCache   = state.tabs   || []
-    activeTabIdCache = state.activeId || null
+  // Renderer notifies main which webview is active (by webContentsId)
+  // Track it per renderer window to avoid detached windows overriding the main window.
+  ipcMain.handle('webview:setActive', (e, id) => { activeWebContentsByWindow.set(e.sender.id, id) })
+
+  // Renderer syncs tab state so bridge /tabs has fresh data
+  ipcMain.handle('webview:updateState', (e, state) => {
+    tabStateByWindow.set(e.sender.id, { tabs: state.tabs || [], activeId: state.activeId || null })
   })
 
   // Ad blocking toggle
@@ -894,6 +912,60 @@ function registerIpc() {
   ipcMain.handle('fx:setEnabled', (_e, enabled) => {
     fxEnabled = !!enabled
     saveAppSettings()
+  })
+
+  // ── Cookie management ─────────────────────────────────────────────────────────
+  // Returns cookies for a domain (or all cookies if no domain given)
+  ipcMain.handle('cookies:get', async (_e, domain) => {
+    const ses = electronSession.defaultSession
+    try {
+      if (domain) {
+        return await ses.cookies.get({ domain })
+      }
+      // All cookies (may be large, limit to 500)
+      return await ses.cookies.get({})
+    } catch (e) {
+      return []
+    }
+  })
+
+  // Set a cookie (url is required by Electron cookies API)
+  ipcMain.handle('cookies:set', async (_e, { url, name, value, domain, path = '/', secure = false, httpOnly = false, sameSite = 'lax', expirationDate }) => {
+    const ses = electronSession.defaultSession
+    try {
+      await ses.cookies.set({ url, name, value, domain, path, secure, httpOnly, sameSite, expirationDate })
+      await ses.cookies.flushStore()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  })
+
+  // Remove a cookie by name and domain
+  ipcMain.handle('cookies:remove', async (_e, { url, name }) => {
+    const ses = electronSession.defaultSession
+    try {
+      await ses.cookies.remove(url, name)
+      await ses.cookies.flushStore()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  })
+
+  // Clear all cookies
+  ipcMain.handle('cookies:clearAll', async () => {
+    const ses = electronSession.defaultSession
+    try {
+      const cookies = await ses.cookies.get({})
+      for (const c of cookies) {
+        await ses.cookies.remove(`https://${c.domain}${c.path}`, c.name)
+      }
+      await ses.cookies.flushStore()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
   })
 
   // Right-click context menu for webview content
@@ -986,11 +1058,15 @@ function registerIpc() {
   // Sessions
   ipcMain.handle('session:save', (_e, name) => {
     const all = loadSessions()
+    const focused = BrowserWindow.getFocusedWindow() || mainWindow
+    const rendererWcId = focused?.webContents?.id
+    const state = rendererWcId ? tabStateByWindow.get(rendererWcId) : null
+    const tabs = state?.tabs || []
     const entry = {
       id: `sess-${Date.now()}`,
       name: name || `会话 ${new Date().toLocaleString('zh-CN')}`,
       createdAt: Date.now(),
-      tabs: tabStateCache.filter(t => t.url && !t.url.startsWith('about:')).map(t => ({ url: t.url, title: t.title })),
+      tabs: tabs.filter(t => t.url && !t.url.startsWith('about:')).map(t => ({ url: t.url, title: t.title })),
     }
     all.push(entry); saveSessions(all); return entry
   })
@@ -1001,6 +1077,10 @@ function registerIpc() {
     if (!sess) return { ok: false }
     mainWindow?.webContents?.send('cmd:restoreSession', sess.tabs)
     return { ok: true, count: sess.tabs.length }
+  })
+  ipcMain.handle('session:new', () => {
+    mainWindow?.webContents?.send('cmd:newSession')
+    return { ok: true }
   })
 
   ipcMain.handle('shell:openExternal', (_e, url) => shell.openExternal(url))
@@ -1055,15 +1135,17 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 900, minHeight: 600,
     title: 'UrchinAI',
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: 'hidden',
+    frame: false,
     backgroundColor: '#111827',
+    borderRadius: 12,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
-      partition: NANOBOT_PARTITION,  // shared session for ad blocking
-      ...(isDev ? {} : { webSecurity: false }),  // allow ws://127.0.0.1 from app:// when packaged
+      partition: NANOBOT_PARTITION,
+      ...(isDev ? {} : { webSecurity: false }),
     },
   })
 

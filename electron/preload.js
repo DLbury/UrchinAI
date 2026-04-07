@@ -4,6 +4,13 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
+  platform: process.platform,  // 'darwin' | 'win32' | 'linux'
+
+  // ── Window controls (frameless mode) ─────────────────────────────────────
+  windowMinimize: ()     => ipcRenderer.invoke('window:minimize'),
+  windowMaximize: ()     => ipcRenderer.invoke('window:maximize'),
+  windowClose: ()        => ipcRenderer.invoke('window:close'),
+  windowIsMaximized: ()  => ipcRenderer.invoke('window:isMaximized'),
 
   // ── Active webview (called when tab focus changes) ────────────────────────
   setActiveWebview: (id)    => ipcRenderer.invoke('webview:setActive', id),
@@ -14,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCmdCloseTab:      (cb) => { ipcRenderer.on('cmd:closeTab',      ()         => cb());     return () => ipcRenderer.removeAllListeners('cmd:closeTab') },
   onCmdSwitchTab:     (cb) => { ipcRenderer.on('cmd:switchTab',     (_e, id)   => cb(id));   return () => ipcRenderer.removeAllListeners('cmd:switchTab') },
   onCmdRestoreSession:(cb) => { ipcRenderer.on('cmd:restoreSession',(_e, tabs) => cb(tabs)); return () => ipcRenderer.removeAllListeners('cmd:restoreSession') },
+  onCmdNewSession:    (cb) => { ipcRenderer.on('cmd:newSession',    ()         => cb());     return () => ipcRenderer.removeAllListeners('cmd:newSession') },
 
   // ── Ad blocking ───────────────────────────────────────────────────────────
   getAdBlockEnabled: ()        => ipcRenderer.invoke('adblock:getEnabled'),
@@ -23,11 +31,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFXEnabled: ()        => ipcRenderer.invoke('fx:getEnabled'),
   setFXEnabled: (enabled) => ipcRenderer.invoke('fx:setEnabled', enabled),
 
+  // ── Cookies ─────────────────────────────────────────────────────────────────
+  getCookies:   (domain)    => ipcRenderer.invoke('cookies:get', domain),
+  setCookie:   (opts)      => ipcRenderer.invoke('cookies:set', opts),
+  removeCookie:(opts)      => ipcRenderer.invoke('cookies:remove', opts),
+  clearAllCookies: ()       => ipcRenderer.invoke('cookies:clearAll'),
+
   // ── Sessions ──────────────────────────────────────────────────────────────
   saveSession:    (name) => ipcRenderer.invoke('session:save', name),
   getAllSessions: ()     => ipcRenderer.invoke('session:getAll'),
   deleteSession:  (id)  => ipcRenderer.invoke('session:delete', id),
   restoreSession: (id)  => ipcRenderer.invoke('session:restore', id),
+  newSession:     ()    => ipcRenderer.invoke('session:new'),
 
   // ── Context menu ──────────────────────────────────────────────────────────
   showContextMenu: (params) => ipcRenderer.invoke('context-menu:show', params),
