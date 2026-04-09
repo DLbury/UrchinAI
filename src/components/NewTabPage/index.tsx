@@ -574,17 +574,32 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     listCategories().then(setCategories).catch(() => {})
   }, [])
 
-  // Initialize chat sessions - always create a new session for fresh start
+  // Initialize chat sessions - load existing and create a new one as current
   useEffect(() => {
-    const newSessionId = `session-${Date.now()}`
-    const newSession: ChatSession = {
-      id: newSessionId,
-      name: `新会话`,
-      createdAt: Date.now()
-    }
-    setSessions([newSession])
-    setMessagesBySession({ [newSessionId]: [] })
-    setCurrentSessionId(newSessionId)
+    listChatSessions().then(data => {
+      const loadedSessions = data.sessions || []
+      const msgs: Record<string, ChatMessage[]> = {}
+      for (const s of loadedSessions) {
+        msgs[s.id] = (s.messages || []) as ChatMessage[]
+      }
+
+      // Create a new session as the current one
+      const newSessionId = `session-${Date.now()}`
+      const newSession: ChatSession = {
+        id: newSessionId,
+        name: `新会话 ${loadedSessions.length + 1}`,
+        createdAt: Date.now()
+      }
+
+      setSessions([...loadedSessions, newSession])
+      setMessagesBySession({ ...msgs, [newSessionId]: [] })
+      setCurrentSessionId(newSessionId)
+    }).catch(() => {
+      const newSessionId = `session-${Date.now()}`
+      setSessions([{ id: newSessionId, name: '新会话', createdAt: Date.now() }])
+      setMessagesBySession({ [newSessionId]: [] })
+      setCurrentSessionId(newSessionId)
+    })
   }, [])
 
   // Load config
