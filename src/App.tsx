@@ -1150,7 +1150,7 @@ export default function App() {
               sendRef={chatSendRef}
               onOpenSettings={openSettings}
             />
-          </div>}
+          </div>
         </div>
       </div>
 
