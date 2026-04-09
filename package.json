@@ -9,7 +9,7 @@
     "build": "vite build",
     "electron": "electron . --no-sandbox",
     "start": "NODE_ENV=production electron . --no-sandbox",
-    "dist": "npm run build && electron-builder -mwl --publish never",
+    "dist": "npm run build && npm run build:backend:win && npm run build:backend:linux && electron-builder -mwl --publish never",
     "build:backend:win": "node scripts/build-backend-win.cjs",
     "build:backend:linux": "node scripts/build-backend-linux.cjs",
     "dist:win": "npm run build && npm run build:backend:win && electron-builder --win --publish never",

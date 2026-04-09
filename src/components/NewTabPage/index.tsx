@@ -536,45 +536,50 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
   }, [])
 
   // Quick Access resize handlers
-  const handleQuickAccessResizeStart = useCallback((e: React.MouseEvent) => {
+  const handleQuickAccessResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
+    e.stopPropagation()
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch (_) {}
+
     setIsResizingQuickAccess(true)
-    quickAccessResizeRef.current = {
-      startX: e.clientX,
-      startWidth: quickAccessWidth,
-    }
+    quickAccessResizeRef.current = { startX: e.clientX, startWidth: quickAccessWidth }
   }, [quickAccessWidth])
+
+  const handleQuickAccessResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isResizingQuickAccess || !quickAccessResizeRef.current) return
+    const { startX, startWidth } = quickAccessResizeRef.current
+    const delta = startX - e.clientX // negative when dragging right
+    const newWidth = Math.max(240, Math.min(600, startWidth + delta))
+    setQuickAccessWidth(newWidth)
+  }, [isResizingQuickAccess])
+
+  const endQuickAccessResize = useCallback((e?: React.PointerEvent<HTMLDivElement>) => {
+    if (e) {
+      e.preventDefault()
+      e.stopPropagation()
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch (_) {}
+    }
+    setIsResizingQuickAccess(false)
+    quickAccessResizeRef.current = null
+  }, [])
 
   useEffect(() => {
     if (!isResizingQuickAccess) return
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!quickAccessResizeRef.current) return
-      const { startX, startWidth } = quickAccessResizeRef.current
-      const delta = startX - e.clientX // negative when dragging right
-      const newWidth = Math.max(240, Math.min(600, startWidth + delta))
-      setQuickAccessWidth(newWidth)
-    }
-
-    const handleMouseUp = () => {
-      setIsResizingQuickAccess(false)
-      quickAccessResizeRef.current = null
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [isResizingQuickAccess])
+    const handleBlur = () => endQuickAccessResize()
+    window.addEventListener('blur', handleBlur)
+    return () => window.removeEventListener('blur', handleBlur)
+  }, [isResizingQuickAccess, endQuickAccessResize])
 
   // Load categories
   useEffect(() => {
     listCategories().then(setCategories).catch(() => {})
   }, [])
 
-  // Initialize chat sessions - load existing and create a new one as current
+  // Initialize chat sessions - load existing and create a new one as current (只在首次加载时创建新会话)
   useEffect(() => {
     listChatSessions().then(data => {
       const loadedSessions = data.sessions || []
@@ -583,17 +588,30 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
         msgs[s.id] = (s.messages || []) as ChatMessage[]
       }
 
-      // Create a new session as the current one
-      const newSessionId = `session-${Date.now()}`
-      const newSession: ChatSession = {
-        id: newSessionId,
-        name: `新会话 ${loadedSessions.length + 1}`,
-        createdAt: Date.now()
+      // 检查是否有保存的当前会话ID
+      const savedCurrentId = data.currentSessionId
+      // 如果有保存的当前会话且存在，恢复它；否则创建新会话
+      if (savedCurrentId && msgs[savedCurrentId]) {
+        setSessions(loadedSessions)
+        setMessagesBySession(msgs)
+        setCurrentSessionId(savedCurrentId)
+      } else if (loadedSessions.length > 0) {
+        // 有历史会话但没有当前会话，使用第一个作为当前
+        setSessions(loadedSessions)
+        setMessagesBySession(msgs)
+        setCurrentSessionId(loadedSessions[0].id)
+      } else {
+        // 没有任何会话，创建新会话
+        const newSessionId = `session-${Date.now()}`
+        const newSession: ChatSession = {
+          id: newSessionId,
+          name: `新会话 1`,
+          createdAt: Date.now()
+        }
+        setSessions([newSession])
+        setMessagesBySession({ [newSessionId]: [] })
+        setCurrentSessionId(newSessionId)
       }
-
-      setSessions([...loadedSessions, newSession])
-      setMessagesBySession({ ...msgs, [newSessionId]: [] })
-      setCurrentSessionId(newSessionId)
     }).catch(() => {
       const newSessionId = `session-${Date.now()}`
       setSessions([{ id: newSessionId, name: '新会话', createdAt: Date.now() }])
@@ -635,15 +653,25 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     }).catch(() => {})
   }, [])
 
-  // Persist messages
+  // Persist messages - 只在有内容的会话时触发保存
   useEffect(() => {
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
     persistTimerRef.current = setTimeout(() => {
-      const fullSessions = sessions.map(s => ({
-        ...s,
-        messages: messagesBySession[s.id] || [],
-      }))
-      saveChatSessions(fullSessions, currentSessionId).catch(() => {})
+      // 只保存有消息的会话
+      const fullSessions = sessions
+        .filter(s => {
+          const msgs = messagesBySession[s.id]
+          return msgs && msgs.length > 0
+        })
+        .map(s => ({
+          ...s,
+          messages: messagesBySession[s.id] || [],
+        }))
+      // 如果有任何会话有消息，或者当前会话有消息，才保存
+      const currentMessages = messagesBySession[currentSessionId]
+      if (fullSessions.length > 0 || (currentMessages && currentMessages.length > 0)) {
+        saveChatSessions(fullSessions, currentSessionId).catch(() => {})
+      }
     }, 800)
     return () => { if (persistTimerRef.current) clearTimeout(persistTimerRef.current) }
   }, [messagesBySession, sessions, currentSessionId])
@@ -764,7 +792,8 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     const textarea = inputRef.current
     if (textarea) {
       textarea.style.height = 'auto'
-      const newHeight = Math.min(textarea.scrollHeight, 128)
+      const measured = textarea.scrollHeight || 0
+      const newHeight = Math.min(Math.max(measured, 48), 128)
       textarea.style.height = `${newHeight}px`
     }
   }, [])
@@ -794,8 +823,17 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
   }, [])
 
+  // 检查目标是否是输入元素
+  const isInputElement = (target: EventTarget | null): boolean => {
+    if (!target) return false
+    const el = target as HTMLElement
+    return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable
+  }
+
   // 拖拽上传处理
   const handleDragEnter = useCallback((e: React.DragEvent) => {
+    // 如果是输入元素，不阻止默认行为，让输入正常工作
+    if (isInputElement(e.target)) return
     e.preventDefault()
     e.stopPropagation()
     dragCounterRef.current += 1
@@ -805,6 +843,7 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
   }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (isInputElement(e.target)) return
     e.preventDefault()
     e.stopPropagation()
     dragCounterRef.current -= 1
@@ -815,12 +854,14 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (isInputElement(e.target)) return
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
   }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
+    if (isInputElement(e.target)) return
     e.preventDefault()
     e.stopPropagation()
     dragCounterRef.current = 0
@@ -1042,7 +1083,9 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
                         setEditingSessionId(null)
                       }
                     }}
-                    className="flex-1 bg-nb-card border border-nb-border rounded px-1.5 py-1 text-xs outline-none focus:border-brand-500"
+                    onMouseDown={e => e.stopPropagation()}
+                    onMouseUp={e => e.stopPropagation()}
+                    className="w-full min-w-0 bg-nb-card border border-nb-border rounded px-2 py-1 text-xs outline-none focus:border-brand-500"
                     autoFocus
                     onClick={e => e.stopPropagation()}
                   />
@@ -1272,7 +1315,10 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
         >
           {/* Resize handle - left edge */}
           <div
-            onMouseDown={handleQuickAccessResizeStart}
+            onPointerDown={handleQuickAccessResizeStart}
+            onPointerMove={handleQuickAccessResizeMove}
+            onPointerUp={endQuickAccessResize}
+            onPointerCancel={endQuickAccessResize}
             className={`absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize group z-10 flex items-center justify-center -ml-1 ${
               isResizingQuickAccess ? 'bg-brand-500' : 'hover:bg-brand-500/50'
             }`}

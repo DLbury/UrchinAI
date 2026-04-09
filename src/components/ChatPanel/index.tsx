@@ -927,7 +927,10 @@ export default function ChatPanel({
     const textarea = inputRef.current
     if (textarea) {
       textarea.style.height = 'auto'
-      const newHeight = Math.min(textarea.scrollHeight, 128) // 最大 128px (约 6 行)
+      // In Electron, during panel show/resize the textarea may momentarily report scrollHeight=0.
+      // Guard with a reasonable minimum height so the input never collapses.
+      const measured = textarea.scrollHeight || 0
+      const newHeight = Math.min(Math.max(measured, 48), 128) // min ~2-3 lines, max 128px
       textarea.style.height = `${newHeight}px`
     }
   }, [])

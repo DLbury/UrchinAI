@@ -582,7 +582,10 @@ export default function App() {
         setCurrentChatSessionId(defaultSession.id)
       }
     }).catch(() => {
-      // Backend not ready or no data
+      // Backend not ready or no data: still ensure we have a usable sessionId
+      const fallbackSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
+      setChatSessions([fallbackSession])
+      setCurrentChatSessionId(fallbackSession.id)
     })
   }, [])
 
@@ -590,6 +593,13 @@ export default function App() {
     if (chatInitRef.current) return
     chatInitRef.current = true
     loadChatSessions()
+  }, [loadChatSessions])
+
+  // When backend becomes ready, reload chat sessions to pick up persisted history
+  useEffect(() => {
+    if (!eAPI?.onBackendReady) return
+    const off = eAPI.onBackendReady(() => loadChatSessions())
+    return () => off?.()
   }, [loadChatSessions])
 
   const urlInputRef = useRef<HTMLInputElement>(null)
@@ -902,27 +912,47 @@ export default function App() {
   const handleAgentNavigate = useCallback((url: string) => navigate(url), [navigate])
 
   // ── Chat panel resize ─────────────────────────────────────────────────────
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+  const chatResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
+
+  const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // Pointer capture is critical in Electron when dragging across <webview>
     e.preventDefault()
+    e.stopPropagation()
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch (_) {}
+
     setIsResizing(true)
-    const startX = e.clientX
-    const startWidth = chatWidth
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const delta = startX - moveEvent.clientX  // 向左拖拽增大宽度
-      const newWidth = Math.min(600, Math.max(320, startWidth + delta))
-      setChatWidth(newWidth)
-    }
-
-    const handleMouseUp = () => {
-      setIsResizing(false)
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
+    chatResizeRef.current = { startX: e.clientX, startWidth: chatWidth }
   }, [chatWidth])
+
+  const handleResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isResizing || !chatResizeRef.current) return
+    const { startX, startWidth } = chatResizeRef.current
+    const delta = startX - e.clientX  // 向左拖拽增大宽度
+    const newWidth = Math.min(600, Math.max(320, startWidth + delta))
+    setChatWidth(newWidth)
+  }, [isResizing])
+
+  const endResize = useCallback((e?: React.PointerEvent<HTMLDivElement>) => {
+    if (e) {
+      e.preventDefault()
+      e.stopPropagation()
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch (_) {}
+    }
+    setIsResizing(false)
+    chatResizeRef.current = null
+  }, [])
+
+  // Safety: if window loses focus during resize, end it
+  useEffect(() => {
+    if (!isResizing) return
+    const handleBlur = () => endResize()
+    window.addEventListener('blur', handleBlur)
+    return () => window.removeEventListener('blur', handleBlur)
+  }, [isResizing, endResize])
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-nb-deepest select-none rounded-2xl">
@@ -1097,7 +1127,10 @@ export default function App() {
           {/* Resize handle - left edge of chat panel */}
           {chatOpen && !isBlankPage && (
             <div
-              onMouseDown={handleResizeStart}
+              onPointerDown={handleResizeStart}
+              onPointerMove={handleResizeMove}
+              onPointerUp={endResize}
+              onPointerCancel={endResize}
               className={`absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize group z-10 flex items-center justify-center ${
                 isResizing ? 'bg-brand-500' : 'hover:bg-brand-500/50'
               }`}
