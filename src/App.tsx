@@ -15,7 +15,7 @@ import NewTabPage from './components/NewTabPage'
 import {
   listBookmarks, addBookmark, removeBookmark, updateBookmarkCategory,
   listHistory, addHistory, clearHistory, listCategories,
-  listChatSessions, saveChatSessions,
+  listChatSessions, saveChatSessions, getSearchEngine,
 } from './api/client'
 
 // ── Electron IPC bridge ──────────────────────────────────────────────────────
@@ -555,7 +555,15 @@ export default function App() {
   const [adBlockOn, setAdBlockOn]       = useState(true)
 
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
-  const [history,   setHistory]   = useState<HistoryItem[]>([])
+  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [searchEngine, setSearchEngine] = useState('bing')
+
+  // Load search engine config
+  useEffect(() => {
+    getSearchEngine().then(data => {
+      if (data.engine) setSearchEngine(data.engine)
+    }).catch(() => {})
+  }, [])
 
   // ── Chat Sessions (AI conversation management) ──────────────────────────────
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
@@ -724,7 +732,15 @@ export default function App() {
     if (!url) return
     if (!/^[a-z][a-z\d+\-.]*:\/\//i.test(url)) {
       if (url.includes('.') && !url.includes(' ')) url = 'https://' + url
-      else url = `https://www.google.com/search?q=${encodeURIComponent(url)}`
+      else {
+        const engineUrls: Record<string, string> = {
+          bing: 'https://www.bing.com/search?q=',
+          google: 'https://www.google.com/search?q=',
+          baidu: 'https://www.baidu.com/s?wd=',
+          duckduckgo: 'https://duckduckgo.com/?q=',
+        }
+        url = `${engineUrls[searchEngine] || engineUrls.bing}${encodeURIComponent(url)}`
+      }
     }
     setUrlInput(url)
     // Update tab state (url for address bar display)
@@ -737,7 +753,7 @@ export default function App() {
       // If webview not ready yet, update src so it loads when mounted
       setTabs(prev => prev.map(t => t.id === activeIdRef.current ? { ...t, src: url } : t))
     }
-  }, [])
+  }, [searchEngine])
 
   // ── Reorder tabs (drag-to-sort within tab bar) ───────────────────────────
   const reorderTab = useCallback((draggedId: string, targetId: string) => {
@@ -1091,7 +1107,7 @@ export default function App() {
               <div className="w-0.5 h-4 rounded-full bg-nb-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
           )}
-          {!isBlankPage && (
+          <div className={`h-full ${isBlankPage ? 'hidden' : 'block'}`}>
             <ChatPanel
               sessionId={currentChatSessionId}
               sessions={chatSessions}
@@ -1134,7 +1150,7 @@ export default function App() {
               sendRef={chatSendRef}
               onOpenSettings={openSettings}
             />
-          )}
+          </div>}
         </div>
       </div>
 

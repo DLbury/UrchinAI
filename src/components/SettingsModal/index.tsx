@@ -3,7 +3,7 @@ import {
   X, Settings, Save, Plus, Trash2, Eye, EyeOff,
   Loader2, CheckCircle, Puzzle, Server, Terminal,
   Globe, Edit2, Check, AlertCircle, ExternalLink, BookOpen, Brain, Sparkles,
-  MousePointer2, Sun, Moon, Monitor, Bookmark, Cookie,
+  MousePointer2, Sun, Moon, Monitor, Bookmark, Cookie, Search,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../hooks/useTheme'
@@ -14,7 +14,7 @@ import {
   listMCPServers, addMCPServer, updateMCPServer, deleteMCPServer,
   listMemory, addMemory, deleteMemory, clearMemory,
   listCategories, addCategory, deleteCategory,
-  getAgentLimits, updateAgentLimits,
+  getAgentLimits, updateAgentLimits, getSearchEngine, updateSearchEngine,
 } from '../../api/client'
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
@@ -1452,6 +1452,7 @@ function AppearanceTab() {
   const { theme, setTheme, isDark } = useTheme()
   const [maxTokens, setMaxTokens] = useState(0)
   const [maxIterations, setMaxIterations] = useState(0)
+  const [searchEngine, setSearchEngine] = useState('bing')
 
   useEffect(() => {
     eAPI?.getFXEnabled().then(setFxOn).catch(() => {})
@@ -1459,6 +1460,9 @@ function AppearanceTab() {
     getAgentLimits().then(limits => {
       setMaxTokens(limits.maxTokens || 0)
       setMaxIterations(limits.maxIterations || 0)
+    }).catch(() => {})
+    getSearchEngine().then(data => {
+      setSearchEngine(data.engine || 'bing')
     }).catch(() => {})
   }, [])
 
@@ -1474,6 +1478,11 @@ function AppearanceTab() {
     setMaxTokens(tokens)
     setMaxIterations(iterations)
     await updateAgentLimits(tokens, iterations)
+  }
+
+  const handleSearchEngineChange = async (engine: string) => {
+    setSearchEngine(engine)
+    await updateSearchEngine(engine)
   }
 
   return (
@@ -1606,6 +1615,31 @@ function AppearanceTab() {
                 />
                 <p className="text-[10px] text-nb-text-muted mt-1">工具调用最大循环次数</p>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Search Engine */}
+      <div className="py-4 border-b border-nb-border-soft">
+        <div className="flex items-start gap-4">
+          <div className="w-9 h-9 rounded-xl bg-nb-card flex items-center justify-center shrink-0 text-brand-400">
+            <Search size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-nb-text">默认搜索引擎</p>
+            <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">设置地址栏和空白页的默认搜索引擎</p>
+            <div className="mt-3">
+              <select
+                value={searchEngine}
+                onChange={(e) => handleSearchEngineChange(e.target.value)}
+                className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text focus:outline-none focus:border-brand-500/50"
+              >
+                <option value="bing">Bing</option>
+                <option value="google">Google</option>
+                <option value="baidu">百度</option>
+                <option value="duckduckgo">DuckDuckGo</option>
+              </select>
             </div>
           </div>
         </div>

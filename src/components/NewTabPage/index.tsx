@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Search, Clock, Globe, X, Send, Trash2, Bot, User, ChevronDown, Plus, Edit2, Paperclip, LayoutGrid, Check, Copy, Wifi, WifiOff, Loader2, Square, Settings, Sparkles } from 'lucide-react'
 import { useWebSocket } from '../../hooks/useWebSocket'
 import MarkdownRenderer from '../common/MarkdownRenderer'
-import { listCategories, listScripts, getConfig, updateModel, getProviders, listChatSessions, saveChatSessions } from '../../api/client'
+import { listCategories, listScripts, getConfig, updateModel, getProviders, listChatSessions, saveChatSessions, getSearchEngine } from '../../api/client'
 import type { ChatMessage, ToolCall, WSMessage } from '../../types'
 import { MessageAttachments, InputAttachments } from '../AttachmentsAdapter'
 import {
@@ -513,6 +513,7 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
   const [isDragging, setIsDragging] = useState(false)
   const [quickAccessWidth, setQuickAccessWidth] = useState(384) // default w-96 = 384px
   const [isResizingQuickAccess, setIsResizingQuickAccess] = useState(false)
+  const [searchEngine, setSearchEngine] = useState('bing')
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -526,6 +527,13 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
   const quickAccessResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
   const { send, onMessage, status } = useWebSocket(currentSessionId)
+
+  // Load search engine config
+  useEffect(() => {
+    getSearchEngine().then(data => {
+      if (data.engine) setSearchEngine(data.engine)
+    }).catch(() => {})
+  }, [])
 
   // Quick Access resize handlers
   const handleQuickAccessResizeStart = useCallback((e: React.MouseEvent) => {
@@ -566,21 +574,17 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     listCategories().then(setCategories).catch(() => {})
   }, [])
 
-  // Initialize chat sessions
+  // Initialize chat sessions - always create a new session for fresh start
   useEffect(() => {
-    listChatSessions().then(data => {
-      const loadedSessions = data.sessions || []
-      const msgs: Record<string, ChatMessage[]> = {}
-      for (const s of loadedSessions) {
-        msgs[s.id] = (s.messages || []) as ChatMessage[]
-      }
-      setSessions(loadedSessions.length > 0 ? loadedSessions : [{ id: 'default', name: '默认会话', createdAt: Date.now() }])
-      setMessagesBySession(msgs)
-      setCurrentSessionId(loadedSessions[0]?.id || 'default')
-    }).catch(() => {
-      setSessions([{ id: 'default', name: '默认会话', createdAt: Date.now() }])
-      setCurrentSessionId('default')
-    })
+    const newSessionId = `session-${Date.now()}`
+    const newSession: ChatSession = {
+      id: newSessionId,
+      name: `新会话`,
+      createdAt: Date.now()
+    }
+    setSessions([newSession])
+    setMessagesBySession({ [newSessionId]: [] })
+    setCurrentSessionId(newSessionId)
   }, [])
 
   // Load config
@@ -920,7 +924,16 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     if (!q) return
     if (/^[a-z][a-z\d+\-.]*:\/\//i.test(q)) onNavigate(q)
     else if (q.includes('.') && !q.includes(' ')) onNavigate('https://' + q)
-    else onNavigate(`https://www.google.com/search?q=${encodeURIComponent(q)}`)
+    else {
+      const engineUrls: Record<string, string> = {
+        bing: 'https://www.bing.com/search?q=',
+        google: 'https://www.google.com/search?q=',
+        baidu: 'https://www.baidu.com/s?wd=',
+        duckduckgo: 'https://duckduckgo.com/?q=',
+      }
+      const url = `${engineUrls[searchEngine] || engineUrls.bing}${encodeURIComponent(q)}`
+      onNavigate(url)
+    }
   }
 
   // Quick access data

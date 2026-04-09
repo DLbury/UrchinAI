@@ -172,3 +172,23 @@ async def update_agent_limits(body: AgentLimitsUpdate):
     cfg["agents"]["defaults"]["maxIterations"] = body.maxIterations
     _write_config(cfg)
     return {"ok": True}
+
+
+@router.get("/search-engine")
+async def get_search_engine():
+    """Get default search engine."""
+    raw = _read_config()
+    return {"engine": raw.get("searchEngine", "bing")}
+
+
+class SearchEngineUpdate(BaseModel):
+    engine: str
+
+
+@router.put("/search-engine")
+async def update_search_engine(body: SearchEngineUpdate):
+    """Update default search engine."""
+    cfg = _read_config()
+    cfg["searchEngine"] = body.engine
+    _write_config(cfg)
+    return {"ok": True}

@@ -57,6 +57,9 @@ export const updateModel = (model: string, provider?: string) =>
 export const getAgentLimits = () => request<{ maxTokens: number; maxIterations: number }>('/api/config/agent-limits')
 export const updateAgentLimits = (maxTokens: number, maxIterations: number) =>
   request('/api/config/agent-limits', { method: 'PUT', body: JSON.stringify({ maxTokens, maxIterations }) })
+export const getSearchEngine = () => request<{ engine: string }>('/api/config/search-engine')
+export const updateSearchEngine = (engine: string) =>
+  request('/api/config/search-engine', { method: 'PUT', body: JSON.stringify({ engine }) })
 
 // Skills
 export const listSkills = () => request<{ skills: Array<{ id: string; name: string; description: string }> }>('/api/skills')
