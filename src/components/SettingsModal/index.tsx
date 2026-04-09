@@ -14,6 +14,7 @@ import {
   listMCPServers, addMCPServer, updateMCPServer, deleteMCPServer,
   listMemory, addMemory, deleteMemory, clearMemory,
   listCategories, addCategory, deleteCategory,
+  getAgentLimits, updateAgentLimits,
 } from '../../api/client'
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
@@ -1449,10 +1450,16 @@ function AppearanceTab() {
   const [fxOn,  setFxOn]  = useState(true)
   const [adOn,  setAdOn]  = useState(true)
   const { theme, setTheme, isDark } = useTheme()
+  const [maxTokens, setMaxTokens] = useState(0)
+  const [maxIterations, setMaxIterations] = useState(0)
 
   useEffect(() => {
     eAPI?.getFXEnabled().then(setFxOn).catch(() => {})
     eAPI?.getAdBlockEnabled().then(setAdOn).catch(() => {})
+    getAgentLimits().then(limits => {
+      setMaxTokens(limits.maxTokens || 0)
+      setMaxIterations(limits.maxIterations || 0)
+    }).catch(() => {})
   }, [])
 
   const handleFX = (v: boolean) => {
@@ -1462,6 +1469,11 @@ function AppearanceTab() {
   const handleAd = (v: boolean) => {
     setAdOn(v)
     eAPI?.setAdBlockEnabled(v)
+  }
+  const handleLimitsChange = async (tokens: number, iterations: number) => {
+    setMaxTokens(tokens)
+    setMaxIterations(iterations)
+    await updateAgentLimits(tokens, iterations)
   }
 
   return (
@@ -1559,6 +1571,45 @@ function AppearanceTab() {
         checked={adOn}
         onChange={handleAd}
       />
+
+      {/* Agent Limits */}
+      <div className="py-4 border-b border-nb-border-soft">
+        <div className="flex items-start gap-4">
+          <div className="w-9 h-9 rounded-xl bg-nb-card flex items-center justify-center shrink-0 text-brand-400">
+            <Terminal size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-nb-text">Agent 限制</p>
+            <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">设置 AI 输出限制，0 表示无限制</p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-nb-text-dim mb-1">最大 Token 数</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={maxTokens}
+                  onChange={(e) => handleLimitsChange(parseInt(e.target.value) || 0, maxIterations)}
+                  className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text focus:outline-none focus:border-brand-500/50"
+                  placeholder="0 = 无限制"
+                />
+                <p className="text-[10px] text-nb-text-muted mt-1">单次响应最大 token 数</p>
+              </div>
+              <div>
+                <label className="block text-xs text-nb-text-dim mb-1">最大迭代次数</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={maxIterations}
+                  onChange={(e) => handleLimitsChange(maxTokens, parseInt(e.target.value) || 0)}
+                  className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text focus:outline-none focus:border-brand-500/50"
+                  placeholder="0 = 无限制"
+                />
+                <p className="text-[10px] text-nb-text-muted mt-1">工具调用最大循环次数</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Preview */}
       <div className="mt-6 rounded-xl border border-nb-border bg-nb-card/40 p-5">

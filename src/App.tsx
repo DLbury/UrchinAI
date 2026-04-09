@@ -556,7 +556,7 @@ export default function App() {
 
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
   const [history,   setHistory]   = useState<HistoryItem[]>([])
-  
+
   // ── Chat Sessions (AI conversation management) ──────────────────────────────
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string>('')
@@ -590,6 +590,7 @@ export default function App() {
   const activeTab  = tabs.find(t => t.id === activeId) ?? null
   const currentUrl = activeTab?.url ?? ''
   const isBookmarked = bookmarks.some(b => b.url === currentUrl)
+  const isBlankPage = !activeTab?.url || activeTab.url === 'about:blank'
 
   // Keep activeIdRef in sync
   useEffect(() => { activeIdRef.current = activeId }, [activeId])
@@ -1017,12 +1018,10 @@ export default function App() {
             {adBlockOn ? <Shield size={15} /> : <ShieldOff size={15} />}
           </button>
 
-          {chatOpen && (
-            <button onClick={openSettings} title={t('common.settings')}
-              className="p-2 rounded-xl text-nb-text-dim hover:text-nb-text hover:bg-nb-raised/80 transition-all duration-150 active:scale-95">
-              <Settings size={16} />
-            </button>
-          )}
+          <button onClick={openSettings} title={t('common.settings')}
+            className="p-2 rounded-xl text-nb-text-dim hover:text-nb-text hover:bg-nb-raised/80 transition-all duration-150 active:scale-95">
+            <Settings size={16} />
+          </button>
           <button onClick={() => setChatOpen(p => !p)} title={chatOpen ? t('common.collapseChat') : t('common.expandChat')}
             className="p-2 rounded-xl text-nb-text-dim hover:text-nb-text hover:bg-nb-raised/80 transition-all duration-150 active:scale-95">
             {chatOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
@@ -1074,13 +1073,13 @@ export default function App() {
           )}
         </div>
 
-        {/* Chat panel — right side */}
+        {/* Chat panel — right side (hidden on blank page) */}
         <div
           className={`relative flex flex-col border-l border-nb-border bg-nb-base shrink-0 overflow-hidden ${isResizing ? '' : 'transition-all duration-200 ease-in-out'}`}
-          style={{ width: chatOpen ? chatWidth : 0 }}
+          style={{ width: (chatOpen && !isBlankPage) ? chatWidth : 0 }}
         >
           {/* Resize handle - left edge of chat panel */}
-          {chatOpen && (
+          {chatOpen && !isBlankPage && (
             <div
               onMouseDown={handleResizeStart}
               className={`absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize group z-10 flex items-center justify-center ${
@@ -1092,48 +1091,50 @@ export default function App() {
               <div className="w-0.5 h-4 rounded-full bg-nb-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
           )}
-          <ChatPanel
-            sessionId={currentChatSessionId}
-            sessions={chatSessions}
-            currentSessionId={currentChatSessionId}
-            onSwitchSession={setCurrentChatSessionId}
-            onNewSession={() => {
-              const newSession = { id: uuidv4(), name: `会话 ${chatSessions.length + 1}`, createdAt: Date.now(), messages: [] }
-              setChatSessions(prev => {
-                const updated = [...prev, newSession]
-                saveChatSessions(updated, newSession.id).catch(() => {})
-                return updated
-              })
-              setCurrentChatSessionId(newSession.id)
-            }}
-            onRenameSession={(id, name) => {
-              setChatSessions(prev => {
-                const updated = prev.map(s => s.id === id ? { ...s, name } : s)
-                saveChatSessions(updated, currentChatSessionId).catch(() => {})
-                return updated
-              })
-            }}
-            onDeleteSession={(id) => {
-              setChatSessions(prev => {
-                const filtered = prev.filter(s => s.id !== id)
-                if (filtered.length === 0) {
-                  const newSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
-                  setCurrentChatSessionId(newSession.id)
-                  saveChatSessions([newSession], newSession.id).catch(() => {})
-                  return [newSession]
-                }
-                const newCurrentId = currentChatSessionId === id ? filtered[0].id : currentChatSessionId
-                if (currentChatSessionId === id) {
-                  setCurrentChatSessionId(filtered[0].id)
-                }
-                saveChatSessions(filtered, newCurrentId).catch(() => {})
-                return filtered
-              })
-            }}
-            onAgentNavigate={handleAgentNavigate}
-            sendRef={chatSendRef}
-            onOpenSettings={openSettings}
-          />
+          {!isBlankPage && (
+            <ChatPanel
+              sessionId={currentChatSessionId}
+              sessions={chatSessions}
+              currentSessionId={currentChatSessionId}
+              onSwitchSession={setCurrentChatSessionId}
+              onNewSession={() => {
+                const newSession = { id: uuidv4(), name: `会话 ${chatSessions.length + 1}`, createdAt: Date.now(), messages: [] }
+                setChatSessions(prev => {
+                  const updated = [...prev, newSession]
+                  saveChatSessions(updated, newSession.id).catch(() => {})
+                  return updated
+                })
+                setCurrentChatSessionId(newSession.id)
+              }}
+              onRenameSession={(id, name) => {
+                setChatSessions(prev => {
+                  const updated = prev.map(s => s.id === id ? { ...s, name } : s)
+                  saveChatSessions(updated, currentChatSessionId).catch(() => {})
+                  return updated
+                })
+              }}
+              onDeleteSession={(id) => {
+                setChatSessions(prev => {
+                  const filtered = prev.filter(s => s.id !== id)
+                  if (filtered.length === 0) {
+                    const newSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
+                    setCurrentChatSessionId(newSession.id)
+                    saveChatSessions([newSession], newSession.id).catch(() => {})
+                    return [newSession]
+                  }
+                  const newCurrentId = currentChatSessionId === id ? filtered[0].id : currentChatSessionId
+                  if (currentChatSessionId === id) {
+                    setCurrentChatSessionId(filtered[0].id)
+                  }
+                  saveChatSessions(filtered, newCurrentId).catch(() => {})
+                  return filtered
+                })
+              }}
+              onAgentNavigate={handleAgentNavigate}
+              sendRef={chatSendRef}
+              onOpenSettings={openSettings}
+            />
+          )}
         </div>
       </div>
 

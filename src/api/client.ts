@@ -54,6 +54,9 @@ export const deleteProvider = (name: string) =>
 export const getModel = () => request<{ model: string }>('/api/config/model')
 export const updateModel = (model: string, provider?: string) =>
   request('/api/config/model', { method: 'PUT', body: JSON.stringify({ model, provider: provider ?? '' }) })
+export const getAgentLimits = () => request<{ maxTokens: number; maxIterations: number }>('/api/config/agent-limits')
+export const updateAgentLimits = (maxTokens: number, maxIterations: number) =>
+  request('/api/config/agent-limits', { method: 'PUT', body: JSON.stringify({ maxTokens, maxIterations }) })
 
 // Skills
 export const listSkills = () => request<{ skills: Array<{ id: string; name: string; description: string }> }>('/api/skills')

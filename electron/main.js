@@ -741,6 +741,68 @@ function startBridgeServer() {
             }))
           }))
 
+        // ── All tabs content ────────────────────────────────────────────
+        } else if (req.method === 'GET' && req.url === '/tabs-content') {
+          // Get content from all open tabs
+          const focused = BrowserWindow.getFocusedWindow() || mainWindow
+          const rendererWcId = focused?.webContents?.id
+          const state = rendererWcId ? tabStateByWindow.get(rendererWcId) : null
+          const tabs = state?.tabs || []
+          const activeId = state?.activeId || null
+
+          const tabsWithContent = []
+          for (const tab of tabs) {
+            if (tab.url && !tab.url.startsWith('about:') && !tab.url.startsWith('chrome:')) {
+              try {
+                // Get webContents for this tab
+                const tabWc = webContents.fromId(tab.id)
+                if (tabWc && !tabWc.isDestroyed()) {
+                  const content = await tabWc.executeJavaScript(`
+                    (function() {
+                      const remove = ['script','style','noscript','iframe','nav','footer',
+                        'header','aside','[role="banner"]','[role="navigation"]',
+                        '.ad','.ads','.advertisement','.cookie-banner','.popup'];
+                      const clone = document.cloneNode(true);
+                      remove.forEach(sel => { try { clone.querySelectorAll(sel).forEach(el => el.remove()) } catch(_){} });
+                      const main = clone.querySelector('main,[role="main"],article,.article,.post,.content,.entry')
+                                || clone.querySelector('.main-content,#main-content,#content,.page-content')
+                                || clone.body;
+                      return {
+                        title: document.title,
+                        url: location.href,
+                        text: (main ? main.innerText : document.body.innerText).replace(/\\n{3,}/g,'\\n\\n').trim().slice(0,8000)
+                      };
+                    })()
+                  `)
+                  tabsWithContent.push({
+                    id: tab.id,
+                    title: content.title || tab.title,
+                    url: content.url || tab.url,
+                    isActive: tab.id === activeId,
+                    content: content.text
+                  })
+                } else {
+                  tabsWithContent.push({
+                    id: tab.id,
+                    title: tab.title,
+                    url: tab.url,
+                    isActive: tab.id === activeId,
+                    content: '[页面内容不可访问]'
+                  })
+                }
+              } catch (err) {
+                tabsWithContent.push({
+                  id: tab.id,
+                  title: tab.title,
+                  url: tab.url,
+                  isActive: tab.id === activeId,
+                  content: `[无法获取内容: ${err.message}]`
+                })
+              }
+            }
+          }
+          res.end(JSON.stringify({ tabs: tabsWithContent, total: tabsWithContent.length }))
+
         // ── Tab: new ────────────────────────────────────────────────────
         } else if (req.method === 'POST' && req.url === '/new-tab') {
           mainWindow?.webContents?.send('cmd:newTab', data.url || '')
@@ -973,7 +1035,7 @@ function registerIpc() {
     const wc = getActiveWc()
     const template = []
 
-    // Navigation
+    // Navigation (only for webview)
     if (wc) {
       template.push(
         { label: '返回',   enabled: wc.canGoBack(),    click: () => wc.goBack()    },
@@ -1015,13 +1077,22 @@ function registerIpc() {
     }
 
     // Page actions
-    template.push(
-      { label: '全选',       role: 'selectAll' },
-      { label: '复制页面地址', click: () => wc && clipboard.writeText(wc.getURL()) },
-      { type: 'separator' },
-      { label: '查看页面源码', click: () => wc && mainWindow?.webContents?.send('cmd:newTab', `view-source:${wc.getURL()}`) },
-      { label: '检查元素',   click: () => wc?.openDevTools() },
-    )
+    if (wc) {
+      template.push(
+        { label: '全选',       role: 'selectAll' },
+        { label: '复制页面地址', click: () => wc && clipboard.writeText(wc.getURL()) },
+        { type: 'separator' },
+        { label: '查看页面源码', click: () => wc && mainWindow?.webContents?.send('cmd:newTab', `view-source:${wc.getURL()}`) },
+        { label: '检查元素',   click: () => wc?.openDevTools() },
+      )
+    } else {
+      // For blank page / NewTabPage
+      template.push(
+        { label: '全选', role: 'selectAll' },
+        { type: 'separator' },
+        { label: '检查元素', click: () => mainWindow?.webContents?.openDevTools() },
+      )
+    }
 
     Menu.buildFromTemplate(template).popup({ window: mainWindow })
   })
@@ -1081,6 +1152,67 @@ function registerIpc() {
   ipcMain.handle('session:new', () => {
     mainWindow?.webContents?.send('cmd:newSession')
     return { ok: true }
+  })
+
+  // Get content from all open tabs for AI analysis
+  ipcMain.handle('tabs:getAllContent', async () => {
+    const focused = BrowserWindow.getFocusedWindow() || mainWindow
+    const rendererWcId = focused?.webContents?.id
+    const state = rendererWcId ? tabStateByWindow.get(rendererWcId) : null
+    const tabs = state?.tabs || []
+    const activeId = state?.activeId || null
+
+    const tabsWithContent = []
+    for (const tab of tabs) {
+      if (tab.url && !tab.url.startsWith('about:') && !tab.url.startsWith('chrome:')) {
+        try {
+          const tabWc = webContents.fromId(tab.id)
+          if (tabWc && !tabWc.isDestroyed()) {
+            const content = await tabWc.executeJavaScript(`
+              (function() {
+                const remove = ['script','style','noscript','iframe','nav','footer',
+                  'header','aside','[role="banner"]','[role="navigation"]',
+                  '.ad','.ads','.advertisement','.cookie-banner','.popup'];
+                const clone = document.cloneNode(true);
+                remove.forEach(sel => { try { clone.querySelectorAll(sel).forEach(el => el.remove()) } catch(_){} });
+                const main = clone.querySelector('main,[role="main"],article,.article,.post,.content,.entry')
+                          || clone.querySelector('.main-content,#main-content,#content,.page-content')
+                          || clone.body;
+                return {
+                  title: document.title,
+                  url: location.href,
+                  text: (main ? main.innerText : document.body.innerText).replace(/\\n{3,}/g,'\\n\\n').trim().slice(0,8000)
+                };
+              })()
+            `)
+            tabsWithContent.push({
+              id: tab.id,
+              title: content.title || tab.title,
+              url: content.url || tab.url,
+              isActive: tab.id === activeId,
+              content: content.text
+            })
+          } else {
+            tabsWithContent.push({
+              id: tab.id,
+              title: tab.title,
+              url: tab.url,
+              isActive: tab.id === activeId,
+              content: '[页面内容不可访问]'
+            })
+          }
+        } catch (err) {
+          tabsWithContent.push({
+            id: tab.id,
+            title: tab.title,
+            url: tab.url,
+            isActive: tab.id === activeId,
+            content: `[无法获取内容: ${err.message}]`
+          })
+        }
+      }
+    }
+    return { tabs: tabsWithContent, total: tabsWithContent.length }
   })
 
   ipcMain.handle('shell:openExternal', (_e, url) => shell.openExternal(url))

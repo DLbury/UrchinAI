@@ -1,3 +1,6 @@
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -131,4 +134,20 @@ button:active:not(:disabled) {
 
 .dark .glass {
   background: rgba(22, 27, 34, 0.8);
+}
+
+/* ---break---           */
+
+@layer base {
+  .theme { --font-heading: var(--font-sans); --font-sans: 'Geist Variable', sans-serif; }
+  * {
+    border-color: rgb(var(--nb-border));
+  }
+  body {
+    background: rgb(var(--nb-base));
+    color: rgb(var(--nb-text));
+  }
+  html {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
 }

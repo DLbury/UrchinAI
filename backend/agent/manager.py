@@ -418,6 +418,18 @@ _EXEC_SCHEMA = {
     },
 }
 
+_GET_ALL_TABS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_all_tabs",
+        "description": "Get content from all open browser tabs. Returns titles, URLs, and content summaries of all tabs for cross-tab analysis.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Browser tool adapter — wraps BrowserTools methods as nanobot Tool instances
@@ -547,6 +559,38 @@ def _build_browser_tool_registry() -> tuple[ToolRegistry, list[dict]]:
     except Exception as e:
         logger.warning("Failed to register web tools: %s", e)
 
+    # Register get_all_tabs tool
+    try:
+        from nanobot.agent.tools.base import Tool
+        import httpx
+
+        class GetAllTabsTool(Tool):
+            name = "get_all_tabs"
+            description = "Get content from all open browser tabs. Returns titles, URLs, and content summaries of all tabs for cross-tab analysis."
+            parameters = {"type": "object", "properties": {}}
+
+            async def execute(self, **kwargs) -> str:
+                try:
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get("http://127.0.0.1:8002/tabs-content", timeout=10.0)
+                        data = response.json()
+                        tabs = data.get("tabs", [])
+                        if not tabs:
+                            return "没有打开的标签页。"
+
+                        result = f"共有 {len(tabs)} 个打开的标签页：\n\n"
+                        for tab in tabs:
+                            result += f"--- 标签页: {tab.get('title', 'Unknown')} ---\n"
+                            result += f"URL: {tab.get('url', 'Unknown')}\n"
+                            result += f"内容摘要:\n{tab.get('content', '无内容')[:3000]}\n\n"
+                        return result
+                except Exception as e:
+                    return f"获取标签页内容失败: {e}"
+
+        registry.register(GetAllTabsTool())
+    except Exception as e:
+        logger.warning("Failed to register get_all_tabs tool: %s", e)
+
     return registry, extra_schemas
 
 
@@ -626,7 +670,7 @@ class AgentMessage:
     """Structured message yielded by the agent stream."""
 
     def __init__(self, mtype: str, content: Any, **kwargs) -> None:
-        self.type = mtype      # "token" | "tool_call" | "tool_result" | "done" | "error"
+        self.type = mtype      # "token" | "reasoning" | "tool_call" | "tool_result" | "done" | "error"
         self.content = content
         self.extra = kwargs
 
@@ -728,27 +772,74 @@ class AgentManager:
 
         logger.info("[DEBUG] manager.chat called: user_message='%s', files=%s",
                     user_message[:100] if user_message else "", files[:1] if files else "none")
-
-        # 构建用户消息内容（支持图片）
         if files:
-            # 构建结构化的 content 数组（用于 Vision LLM）
+            for idx, f in enumerate(files):
+                data_preview = f.get('data', '')[:50] if f.get('data') else 'None'
+                logger.info("[DEBUG] file %d: name=%s, type=%s, data=%s...",
+                           idx, f.get('name'), f.get('type'), data_preview)
+
+        # 处理文件上传：保存到工作区，让模型通过 skills 读取
+        uploaded_files = []
+        if files:
+            import base64
+            # 确保工作区目录存在
+            session_workspace = NANOBOT_WORKSPACE / self.session_id
+            session_workspace.mkdir(parents=True, exist_ok=True)
+
+            for f in files:
+                name = f.get("name", "unnamed")
+                data = f.get("data", "")
+                file_type = f.get("type", "")
+
+                if not data or "," not in data:
+                    logger.warning("Invalid file data for %s", name)
+                    continue
+
+                try:
+                    # 解码 base64 数据
+                    base64_data = data.split(",", 1)[1]
+                    file_bytes = base64.b64decode(base64_data)
+
+                    # 保存到工作区
+                    file_path = session_workspace / name
+                    # 处理文件名冲突
+                    counter = 1
+                    original_name = name
+                    while file_path.exists():
+                        stem = Path(original_name).stem
+                        suffix = Path(original_name).suffix
+                        name = f"{stem}_{counter}{suffix}"
+                        file_path = session_workspace / name
+                        counter += 1
+
+                    file_path.write_bytes(file_bytes)
+                    uploaded_files.append({
+                        "name": name,
+                        "path": str(file_path),
+                        "type": file_type,
+                        "size": len(file_bytes)
+                    })
+                    logger.info("Saved file to workspace: %s (%d bytes)", file_path, len(file_bytes))
+                except Exception as e:
+                    logger.warning("Failed to save file %s: %s", name, e)
+
+        # 构建用户消息
+        if files:
             content = []
             if user_message:
                 content.append({"type": "text", "text": user_message})
-            for f in files:
-                file_type = f.get("type", "")
-                data = f.get("data", "")
-                if file_type.startswith("image/") and data:
-                    # 图片使用 image_url 类型
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {"url": data}  # data 已经是 data:image/jpeg;base64,... 格式
-                    })
-                else:
-                    # 非图片用 text 类型
-                    name = f.get("name", "unnamed")
-                    content.append({"type": "text", "text": f"[附件: {name}]"})
+
+            # 添加文件引用信息
+            for f in uploaded_files:
+                file_info = f"\n\n[文件已上传: {f['name']}]\n"
+                file_info += f"路径: {f['path']}\n"
+                file_info += f"类型: {f['type']}\n"
+                file_info += f"大小: {f['size']} bytes\n"
+                file_info += f"你可以使用 read_file 工具读取此文件。\n"
+                content.append({"type": "text", "text": file_info})
+
             self._history.append({"role": "user", "content": content})
+            logger.info("[DEBUG] Built user message with %d uploaded files", len(uploaded_files))
         else:
             self._history.append({"role": "user", "content": user_message})
 
@@ -758,6 +849,139 @@ class AgentManager:
         else:
             async for msg in self._fallback_chat(user_message):
                 yield msg
+
+    def _is_reasoning_model(self, model: str) -> bool:
+        """Check if the model is a reasoning model (e.g., DeepSeek R1, Claude extended thinking)."""
+        reasoning_keywords = [
+            "deepseek-reasoner",
+            "deepseek-r1",
+            "claude-opus-4-6",
+            "o1-",
+            "o3-",
+        ]
+        model_lower = model.lower()
+        return any(keyword in model_lower for keyword in reasoning_keywords)
+
+    async def _stream_with_reasoning(
+        self,
+        provider,
+        messages: list[dict],
+        tools: list[dict],
+        model: str,
+        token_queue: asyncio.Queue,
+        reasoning_queue: asyncio.Queue,
+        stop_event: asyncio.Event,
+        max_tokens: int = 0,
+    ) -> Any:
+        """Stream LLM response with reasoning content support.
+
+        For reasoning models like DeepSeek R1, captures reasoning_content separately
+        from the main content.
+        """
+        import asyncio
+
+        # Build request kwargs similar to nanobot's provider
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "tools": tools if tools else None,
+            "tool_choice": "auto" if tools else None,
+            "temperature": 0.1,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        # Add max_tokens if specified (> 0)
+        if max_tokens > 0:
+            kwargs["max_tokens"] = max_tokens
+        # Remove None values
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+
+        content_parts = []
+        reasoning_parts = []
+        chunks = []
+
+        try:
+            stream = await provider._client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if stop_event.is_set():
+                    break
+
+                chunks.append(chunk)
+
+                if not chunk.choices:
+                    continue
+
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                if not delta:
+                    continue
+
+                # Capture reasoning content (for DeepSeek R1)
+                reasoning_text = getattr(delta, "reasoning_content", None)
+                if reasoning_text:
+                    reasoning_parts.append(reasoning_text)
+                    await reasoning_queue.put(reasoning_text)
+
+                # Capture main content
+                text = getattr(delta, "content", None)
+                if text:
+                    content_parts.append(text)
+                    await token_queue.put(text)
+
+        except Exception as e:
+            logger.exception("Error in reasoning stream")
+            # Return a simple response object with what we have so far
+            return type(
+                "obj",
+                (object,),
+                {
+                    "has_tool_calls": False,
+                    "content": "".join(content_parts),
+                    "reasoning_content": "".join(reasoning_parts),
+                    "tool_calls": [],
+                },
+            )()
+
+        # Build response object
+        full_content = "".join(content_parts)
+        full_reasoning = "".join(reasoning_parts)
+
+        # Parse tool calls from chunks if needed (simplified version)
+        has_tool_calls = False
+        tool_calls = []
+
+        # Check if any chunk has tool calls
+        for chunk in chunks:
+            if hasattr(chunk, 'choices') and chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta and getattr(delta, 'tool_calls', None):
+                    has_tool_calls = True
+                    break
+
+        return type(
+            "obj",
+            (object,),
+            {
+                "has_tool_calls": has_tool_calls,
+                "content": full_content,
+                "reasoning_content": full_reasoning,
+                "tool_calls": tool_calls,
+            },
+        )()
+
+    def _get_agent_limits(self) -> tuple[int, int]:
+        """Read agent limits from config. Returns (max_tokens, max_iterations). 0 means unlimited."""
+        try:
+            if NANOBOT_CONFIG.exists():
+                data = json.loads(NANOBOT_CONFIG.read_text(encoding="utf-8"))
+                defaults = data.get("agents", {}).get("defaults", {})
+                max_tokens = defaults.get("maxTokens", 0)
+                max_iterations = defaults.get("maxIterations", 0)
+                return int(max_tokens) if max_tokens else 0, int(max_iterations) if max_iterations else 0
+        except Exception as e:
+            logger.debug("Failed to read agent limits: %s", e)
+        return 0, 0
 
     async def _streaming_chat(self) -> AsyncGenerator[AgentMessage, None]:
         """Streaming agent loop using nanobot's native providers."""
@@ -773,19 +997,44 @@ class AgentManager:
             yield AgentMessage("error", f"Provider 创建失败：{e}")
             return
 
+        # Read agent limits from config
+        config_max_tokens, config_max_iterations = self._get_agent_limits()
+        logger.info("Agent limits: max_tokens=%s, max_iterations=%s",
+                    config_max_tokens if config_max_tokens > 0 else "unlimited",
+                    config_max_iterations if config_max_iterations > 0 else "unlimited")
+
+        # Check if using a reasoning model
+        is_reasoning = self._is_reasoning_model(model)
+
         # Browser tools registered in nanobot ToolRegistry
         browser_registry, extra_tool_schemas = _build_browser_tool_registry()
         # Raw schemas still needed for the LLM provider (registry handles execution)
-        tools = [*_BROWSER_TOOL_SCHEMAS, _READ_FILE_SCHEMA, _WRITE_FILE_SCHEMA, _EDIT_FILE_SCHEMA, _LIST_DIR_SCHEMA, _EXEC_SCHEMA, *extra_tool_schemas]
+        tools = [*_BROWSER_TOOL_SCHEMAS, _READ_FILE_SCHEMA, _WRITE_FILE_SCHEMA, _EDIT_FILE_SCHEMA, _LIST_DIR_SCHEMA, _EXEC_SCHEMA, _GET_ALL_TABS_SCHEMA, *extra_tool_schemas]
 
         # Build messages: system (with memory) + history (already includes latest user turn)
         messages: list[dict] = [{"role": "system", "content": _build_system_prompt()}] + self._history
+        import json
+        logger.info("[DEBUG] messages to be sent to LLM: %s", json.dumps(messages, ensure_ascii=False)[:800])
 
-        max_iterations = 15
+        # 特别检查最后一条用户消息是否包含图片
+        if messages:
+            last_msg = messages[-1]
+            if last_msg.get("role") == "user":
+                content = last_msg.get("content")
+                if isinstance(content, list):
+                    image_items = [item for item in content if isinstance(item, dict) and item.get("type") == "image_url"]
+                    logger.info("[DEBUG] Found %d image_url items in user message", len(image_items))
+                    for idx, img in enumerate(image_items):
+                        url = img.get("image_url", {}).get("url", "")[:50]
+                        logger.info("[DEBUG] image %d url: %s...", idx, url)
+                else:
+                    logger.info("[DEBUG] User content is string: %s", content[:100] if content else "empty")
+
         assistant_content = ""
 
         # Streaming infrastructure
         token_queue: asyncio.Queue[str] = asyncio.Queue()
+        reasoning_queue: asyncio.Queue[str] = asyncio.Queue()
         # Event for responsive stop detection
         stop_event = asyncio.Event()
 
@@ -806,9 +1055,12 @@ class AgentManager:
                 return True
             return False
 
+        # For reasoning models, we need to capture reasoning_content separately
+        reasoning_content = ""
 
         try:
-            for iteration in range(max_iterations):
+            iteration = 0
+            while True:
                 # Check stop before each iteration
                 if await _check_stop():
                     yield AgentMessage("error", "已停止生成")
@@ -820,64 +1072,98 @@ class AgentManager:
                         token_queue.get_nowait()
                     except asyncio.QueueEmpty:
                         break
+                while not reasoning_queue.empty():
+                    try:
+                        reasoning_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
 
                 # ── Streaming LLM call via nanobot provider ──────────────────
                 stop_event.clear()
 
-                # Run chat_stream in background so we can yield tokens as they arrive
-                stream_task = asyncio.create_task(
-                    provider.chat_stream(
-                        messages=messages,
-                        tools=tools,
-                        model=model,
-                        max_tokens=4096,
-                        temperature=0.1,
-                        on_content_delta=token_callback,
+                # Check iteration limit
+                if config_max_iterations > 0 and iteration >= config_max_iterations:
+                    yield AgentMessage("error", f"已达到最大迭代次数限制 ({config_max_iterations})")
+                    return
+                iteration += 1
+
+                # Check if this is a reasoning model that needs special handling
+                if is_reasoning and hasattr(provider, '_client'):
+                    # For reasoning models, use direct client access to capture reasoning_content
+                    response = await self._stream_with_reasoning(
+                        provider, messages, tools, model, token_queue, reasoning_queue, stop_event,
+                        max_tokens=config_max_tokens
                     )
-                )
+                else:
+                    # Standard streaming for non-reasoning models
+                    chat_kwargs = {
+                        "messages": messages,
+                        "tools": tools,
+                        "model": model,
+                        "temperature": 0.1,
+                        "on_content_delta": token_callback,
+                    }
+                    if config_max_tokens > 0:
+                        chat_kwargs["max_tokens"] = config_max_tokens
+                    stream_task = asyncio.create_task(
+                        provider.chat_stream(**chat_kwargs)
+                    )
 
-                # Drain tokens from queue WHILE stream is running (concurrent)
-                response_content = ""
-                while not stop_event.is_set():
-                    try:
-                        token = await asyncio.wait_for(token_queue.get(), timeout=0.05)
-                        response_content += token
-                        assistant_content += token
-                        yield AgentMessage("token", token)
-                    except asyncio.TimeoutError:
-                        if stream_task.done():
+                    # Drain tokens from queue WHILE stream is running (concurrent)
+                    response_content = ""
+                    while not stop_event.is_set():
+                        try:
+                            token = await asyncio.wait_for(token_queue.get(), timeout=0.05)
+                            response_content += token
+                            assistant_content += token
+                            yield AgentMessage("token", token)
+                        except asyncio.TimeoutError:
+                            if stream_task.done():
+                                break
+                            continue
+
+                    # Grab any remaining tokens
+                    while not token_queue.empty():
+                        try:
+                            token = token_queue.get_nowait()
+                            response_content += token
+                            assistant_content += token
+                            yield AgentMessage("token", token)
+                        except asyncio.QueueEmpty:
                             break
-                        continue
 
-                # Grab any remaining tokens
-                while not token_queue.empty():
+                    # Get the final LLM response
                     try:
-                        token = token_queue.get_nowait()
-                        response_content += token
+                        if not stream_task.done():
+                            stream_task.cancel()
+                        response = stream_task.result()
+                    except (asyncio.CancelledError, asyncio.InvalidStateError):
+                        response = type("obj", (object,), {"has_tool_calls": False, "content": response_content})()
+                    except Exception:
+                        response = type("obj", (object,), {"has_tool_calls": False, "content": response_content})()
+
+                    # Final immediate drain - grab any remaining tokens
+                    while not token_queue.empty():
+                        try:
+                            token = token_queue.get_nowait()
+                            response_content += token
+                            assistant_content += token
+                            yield AgentMessage("token", token)
+                        except asyncio.QueueEmpty:
+                            break
+
+                # For reasoning model, yield the content collected in _stream_with_reasoning
+                if is_reasoning:
+                    response_content = response.content if hasattr(response, 'content') else ""
+                    # Extract reasoning content from response
+                    new_reasoning = getattr(response, 'reasoning_content', '')
+                    if new_reasoning:
+                        reasoning_content = new_reasoning
+                        yield AgentMessage("reasoning", reasoning_content)
+                    # Then yield the actual content token by token
+                    for token in response_content:
                         assistant_content += token
                         yield AgentMessage("token", token)
-                    except asyncio.QueueEmpty:
-                        break
-
-                # Get the final LLM response
-                try:
-                    if not stream_task.done():
-                        stream_task.cancel()
-                    response = stream_task.result()
-                except (asyncio.CancelledError, asyncio.InvalidStateError):
-                    response = type("obj", (object,), {"has_tool_calls": False, "content": response_content})()
-                except Exception:
-                    response = type("obj", (object,), {"has_tool_calls": False, "content": response_content})()
-
-                # Final immediate drain - grab any remaining tokens
-                while not token_queue.empty():
-                    try:
-                        token = token_queue.get_nowait()
-                        response_content += token
-                        assistant_content += token
-                        yield AgentMessage("token", token)
-                    except asyncio.QueueEmpty:
-                        break
 
                 # Check stop after streaming
                 if await _check_stop():

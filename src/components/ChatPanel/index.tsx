@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, Trash2, Bot, User, ChevronDown, ChevronRight, Terminal, CheckCircle, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings, Copy, Square, Edit2, Plus, X, Paperclip } from 'lucide-react'
+import { Send, Trash2, Bot, User, ChevronDown, ChevronRight, Terminal, CheckCircle, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings, Copy, Square, Edit2, Plus, X, Paperclip, Brain, Wrench } from 'lucide-react'
 import { useWebSocket } from '../../hooks/useWebSocket'
 import MarkdownRenderer from '../common/MarkdownRenderer'
 import { listScripts, getConfig, updateModel, getProviders, createScript, updateScript, deleteScript, listChatSessions, saveChatSessions } from '../../api/client'
 import type { ChatMessage, ToolCall, WSMessage } from '../../types'
+import { MessageAttachments, InputAttachments } from '../AttachmentsAdapter'
+import {
+  Reasoning,
+  ReasoningTrigger,
+  ReasoningContent,
+} from '@/components/ai-elements/reasoning'
 
 interface ChatSession {
   id: string
@@ -92,6 +98,7 @@ const DEFAULT_SCRIPTS: Script[] = [
   { id: 'default-3', name: '提取链接', prompt: '请列出当前页面上所有重要链接', icon: '🔗' },
   { id: 'default-4', name: '翻译页面', prompt: '请将当前页面的主要内容翻译成中文（使用 browser_get_page_content 工具读取）', icon: '🌐' },
   { id: 'default-5', name: '填写表单', prompt: '请帮我查看当前页面有哪些表单字段，并提示我如何填写', icon: '📋' },
+  { id: 'default-6', name: '分析所有标签页', prompt: '请分析我当前打开的所有标签页，帮我总结关键信息、比较不同来源的观点，并给出综合见解', icon: '📑' },
 ]
 
 
@@ -99,37 +106,41 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
 
-  const statusIcon = {
-    pending: <Loader2 size={13} className="animate-spin text-yellow-400" />,
-    running: <Loader2 size={13} className="animate-spin text-blue-400" />,
-    done: <CheckCircle size={13} className="text-green-400" />,
-    error: <XCircle size={13} className="text-red-600 dark:text-red-400" />,
+  const statusConfig = {
+    pending: { icon: Loader2, className: 'animate-spin text-yellow-500', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
+    running: { icon: Loader2, className: 'animate-spin text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
+    done: { icon: CheckCircle, className: 'text-green-500', bg: 'bg-green-500/10', border: 'border-green-500/30' },
+    error: { icon: XCircle, className: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/30' },
   }[tool.status]
 
+  const StatusIcon = statusConfig.icon
+
   return (
-    <div className="mt-1.5 rounded-lg border border-nb-border bg-nb-card/60 text-xs overflow-hidden">
+    <div className={`mt-2 rounded-lg border ${statusConfig.border} ${statusConfig.bg} overflow-hidden`}>
       <button
         onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-nb-raised/40 transition-colors"
+        className="flex items-center gap-2 w-full px-3 py-2.5 text-left hover:bg-nb-raised/30 transition-colors"
       >
-        {statusIcon}
-        <Terminal size={12} className="text-nb-text-dim" />
-        <span className="font-mono text-brand-400 font-medium">{tool.name}</span>
-        <span className="text-nb-text-muted flex-1">({Object.keys(tool.args).join(', ')})</span>
-        {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <StatusIcon size={14} className={statusConfig.className} />
+        <Wrench size={12} className="text-nb-text-dim" />
+        <span className="font-mono text-sm text-brand-400 font-medium">{tool.name}</span>
+        <span className="text-nb-text-muted text-xs flex-1 truncate">
+          ({Object.keys(tool.args).join(', ')})
+        </span>
+        {expanded ? <ChevronDown size={14} className="text-nb-text-dim" /> : <ChevronRight size={14} className="text-nb-text-dim" />}
       </button>
       {expanded && (
-        <div className="border-t border-nb-border px-3 py-2 space-y-2">
+        <div className="border-t border-nb-border/50 px-3 py-3 space-y-3 bg-nb-card/40">
           <div>
-            <p className="text-nb-text-muted mb-1 uppercase tracking-wide" style={{ fontSize: 10 }}>{t('chat.toolArgs')}</p>
-            <pre className="text-nb-text-soft whitespace-pre-wrap break-all font-mono" style={{ fontSize: 11 }}>
+            <p className="text-nb-text-muted mb-1.5 uppercase tracking-wide text-[10px] font-medium">{t('chat.toolArgs') || '参数'}</p>
+            <pre className="text-nb-text-soft whitespace-pre-wrap break-all font-mono text-[11px] bg-nb-raised/50 rounded-md p-2">
               {JSON.stringify(tool.args, null, 2)}
             </pre>
           </div>
           {tool.result !== undefined && (
             <div>
-              <p className="text-nb-text-muted mb-1 uppercase tracking-wide" style={{ fontSize: 10 }}>{t('chat.toolResult')}</p>
-              <pre className="text-nb-text-soft whitespace-pre-wrap break-all font-mono" style={{ fontSize: 11 }}>
+              <p className="text-nb-text-muted mb-1.5 uppercase tracking-wide text-[10px] font-medium">{t('chat.toolResult') || '结果'}</p>
+              <pre className="text-nb-text-soft whitespace-pre-wrap break-all font-mono text-[11px] bg-nb-raised/50 rounded-md p-2 max-h-40 overflow-y-auto">
                 {tool.result}
               </pre>
             </div>
@@ -140,7 +151,7 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   )
 }
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: boolean }) {
   const isUser = msg.role === 'user'
   const [showCopy, setShowCopy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -164,6 +175,9 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
     return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
+  // 判断是否正在推理中
+  const isReasoningStreaming = isStreaming && msg.reasoning && !msg.content
+
   return (
     <div className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && (
@@ -172,6 +186,17 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         </div>
       )}
       <div className={`max-w-[85%] ${isUser ? 'order-first' : ''}`}>
+        {/* Reasoning 推理过程 - 使用 AI SDK Elements */}
+        {!isUser && msg.reasoning && (
+          <Reasoning
+            isStreaming={isReasoningStreaming}
+            className="mb-2"
+          >
+            <ReasoningTrigger />
+            <ReasoningContent>{msg.reasoning}</ReasoningContent>
+          </Reasoning>
+        )}
+
         {/* 消息内容气泡 */}
         <div
           className={`relative px-4 py-3 rounded-2xl text-sm leading-relaxed transition-all duration-200 ${
@@ -200,24 +225,9 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           {msg.content && isUser && (
             <div className="select-text whitespace-pre-wrap">{msg.content}</div>
           )}
-          {/* 用户消息的附件图片 */}
+          {/* 用户消息的附件图片 - 使用 AI SDK Elements */}
           {isUser && msg.files && msg.files.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-2">
-              {msg.files.map((file, index) => (
-                file.type.startsWith('image/') ? (
-                  <img
-                    key={index}
-                    src={file.data}
-                    alt={file.name}
-                    className="max-w-[200px] max-h-[150px] rounded-lg object-cover"
-                  />
-                ) : (
-                  <div key={index} className="flex items-center gap-1 px-2 py-1 rounded bg-nb-raised/50 text-xs text-nb-text-soft">
-                    📎 {file.name}
-                  </div>
-                )
-              ))}
-            </div>
+            <MessageAttachments files={msg.files} className="mt-2" />
           )}
           {msg.content && showCopy && (
             <button
@@ -626,6 +636,7 @@ export default function ChatPanel({
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; data: string; type: string }[]>([])
+  const [isDragging, setIsDragging] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -634,6 +645,7 @@ export default function ChatPanel({
   // Token burst smoothing: backend may emit many tokens very quickly; React 18 can batch
   // state updates and it looks "non-streaming". Buffer tokens and flush at most once/frame.
   const tokenBufferRef = useRef('')
+  const reasoningBufferRef = useRef('')  // 推理过程缓冲区
   const flushRafRef = useRef<number | null>(null)
   const scriptsScrollRef = useRef<HTMLDivElement>(null)
   const sessionPanelRef = useRef<HTMLDivElement>(null)
@@ -771,14 +783,23 @@ export default function ChatPanel({
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
   const flushTokenBuffer = useCallback(() => {
-    if (!tokenBufferRef.current) return
-    const chunk = tokenBufferRef.current
+    if (!tokenBufferRef.current && !reasoningBufferRef.current) return
+    const contentChunk = tokenBufferRef.current
+    const reasoningChunk = reasoningBufferRef.current
     tokenBufferRef.current = ''
+    reasoningBufferRef.current = ''
     const msgId = streamingMsgIdRef.current
     if (!msgId) return
     setMessagesBySession(prev => ({
       ...prev,
-      [sessionId]: (prev[sessionId] ?? []).map((m) => m.id === msgId ? { ...m, content: (m.content ?? '') + chunk } : m)
+      [sessionId]: (prev[sessionId] ?? []).map((m) => {
+        if (m.id !== msgId) return m
+        return {
+          ...m,
+          ...(contentChunk && { content: (m.content ?? '') + contentChunk }),
+          ...(reasoningChunk && { reasoning: (m.reasoning ?? '') + reasoningChunk }),
+        }
+      })
     }))
   }, [sessionId])
 
@@ -792,6 +813,10 @@ export default function ChatPanel({
       if (msg.type === 'token') {
         const token = msg.content ?? ''
         tokenBufferRef.current += token
+        scheduleFlush()
+      } else if (msg.type === 'reasoning') {
+        const reasoning = msg.content ?? ''
+        reasoningBufferRef.current += reasoning
         scheduleFlush()
       } else if (msg.type === 'tool_call') {
         flushTokenBuffer()
@@ -839,6 +864,7 @@ export default function ChatPanel({
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
       } else if (msg.type === 'history_cleared') {
         tokenBufferRef.current = ''
+        reasoningBufferRef.current = ''
         if (flushRafRef.current != null) {
           cancelAnimationFrame(flushRafRef.current)
           flushRafRef.current = null
@@ -852,6 +878,7 @@ export default function ChatPanel({
         flushRafRef.current = null
       }
       tokenBufferRef.current = ''
+      reasoningBufferRef.current = ''
     }
   }, [onMessage, flushTokenBuffer, scheduleFlush, sessionId])
 
@@ -872,7 +899,7 @@ export default function ChatPanel({
       ...prev,
       [sessionId]: [...(prev[sessionId] ?? []),
         { id: userMsgId, role: 'user', content: userContent, files: attachedFiles, createdAt: Date.now() },
-        { id: assistantMsgId, role: 'assistant', content: '', toolCalls: [], createdAt: Date.now() },
+        { id: assistantMsgId, role: 'assistant', content: '', reasoning: '', toolCalls: [], createdAt: Date.now() },
       ]
     }))
     streamingMsgIdRef.current = assistantMsgId
@@ -937,6 +964,79 @@ export default function ChatPanel({
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
   }, [])
 
+  // 拖拽上传处理
+  const dragCounterRef = useRef(0)
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current += 1
+    if (dragCounterRef.current === 1) {
+      setIsDragging(true)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current -= 1
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0
+      setIsDragging(false)
+    }
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // 必须设置 dropEffect 才能让 drop 事件触发
+    e.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current = 0
+    setIsDragging(false)
+
+    if (status !== 'connected') return
+
+    const files = e.dataTransfer.files
+    if (!files || files.length === 0) return
+
+    // 支持的文件扩展名
+    const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.doc', '.docx', '.txt', '.xlsx', '.xls']
+
+    Array.from(files).forEach(file => {
+      // 检查文件类型（通过 MIME 类型或扩展名）
+      const fileExt = '.' + file.name.split('.').pop()?.toLowerCase()
+      const isValidType = file.type.startsWith('image/') ||
+        file.type === 'application/pdf' ||
+        file.type === 'application/msword' ||
+        file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        file.type === 'application/vnd.ms-excel' ||
+        file.type === 'text/plain' ||
+        validExtensions.includes(fileExt)
+
+      if (!isValidType) {
+        console.warn('[ChatPanel] 不支持的文件类型:', file.type, file.name)
+        return
+      }
+
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const data = ev.target?.result as string
+        setAttachedFiles(prev => [...prev, {
+          name: file.name,
+          data,
+          type: file.type || 'application/octet-stream'
+        }])
+      }
+      reader.readAsDataURL(file)
+    })
+  }, [status])
+
   // 停止生成
   const stopGeneration = () => {
     send({ type: 'stop' })
@@ -944,6 +1044,11 @@ export default function ChatPanel({
     streamingMsgIdRef.current = null
     pendingToolsRef.current.clear()
   }
+
+  // 分析所有标签页 - 直接发送消息让 AI 调用工具
+  const analyzeAllTabs = useCallback(() => {
+    sendMessage('请分析我当前打开的所有标签页，帮我总结关键信息、比较不同来源的观点，并给出综合见解')
+  }, [sendMessage])
 
   // 点击外部关闭会话面板
   useEffect(() => {
@@ -958,7 +1063,25 @@ export default function ChatPanel({
   }, [showSessionPanel])
 
   return (
-    <div className="flex flex-col h-full bg-nb-base rounded-xl border border-nb-border overflow-hidden">
+    <div
+      className="flex flex-col h-full bg-nb-base rounded-xl border border-nb-border overflow-hidden relative"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {/* 拖拽时的遮罩提示 */}
+      {isDragging && (
+        <div className="absolute inset-0 bg-brand-500/10 border-2 border-dashed border-brand-500/50 rounded-xl flex items-center justify-center z-50 pointer-events-none backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 text-brand-500 bg-nb-base/80 px-6 py-4 rounded-2xl shadow-2xl">
+            <div className="p-3 bg-brand-500/10 rounded-full">
+              <Paperclip size={28} />
+            </div>
+            <span className="text-sm font-medium">松开以上传文件</span>
+          </div>
+        </div>
+      )}
+
       {/* 标题栏 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-nb-border bg-nb-card">
         <div className="flex items-center gap-2">
@@ -1102,7 +1225,13 @@ export default function ChatPanel({
             </div>
           </div>
         )}
-        {messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)}
+        {messages.map((msg, index) => (
+          <MessageBubble
+            key={msg.id}
+            msg={msg}
+            isStreaming={isStreaming && index === messages.length - 1}
+          />
+        ))}
         <div ref={bottomRef} />
       </div>
 
@@ -1143,90 +1272,90 @@ export default function ChatPanel({
         />
       )}
 
-      {/* 输入框 */}
+      {/* 输入框 - 上下布局 */}
       <div className="px-3 py-3 border-t border-nb-border bg-gradient-to-t from-nb-card to-nb-card/80">
-        {/* 附件预览 */}
-        {attachedFiles.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-2">
-            {attachedFiles.map((file, index) => (
-              <div key={index} className="relative group flex items-center gap-2 px-3 py-1.5 rounded-lg bg-nb-raised border border-nb-border">
-                {file.type.startsWith('image/') ? (
-                  <img src={file.data} alt={file.name} className="w-8 h-8 object-cover rounded" />
-                ) : (
-                  <span className="text-xs text-nb-text-dim">📎</span>
-                )}
-                <span className="text-xs text-nb-text-soft max-w-[100px] truncate">{file.name}</span>
-                <button
-                  onClick={() => removeAttachedFile(index)}
-                  className="absolute -top-1 -right-1 p-0.5 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X size={10} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="flex items-end gap-2 bg-nb-deepest/40 hover:bg-nb-deepest/60 rounded-2xl px-4 py-2.5 transition-all duration-150 focus-within:bg-nb-deepest/60 focus-within:ring-2 focus-within:ring-brand-500/30 border border-nb-border/50 focus-within:border-brand-500/40">
-          {/* 文件上传按钮 */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="image/*,.pdf,.doc,.docx,.txt"
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={status !== 'connected'}
-            className="shrink-0 p-1.5 rounded-lg text-nb-text-dim hover:text-brand-500 hover:bg-brand-500/10 transition-all duration-150 disabled:opacity-50"
-            title="上传文件"
-          >
-            <Paperclip size={16} />
-          </button>
+        {/* 附件预览 - 使用 AI SDK Elements */}
+        <InputAttachments
+          files={attachedFiles}
+          onRemove={removeAttachedFile}
+          className="mb-2"
+        />
+
+        {/* 文本编辑区域 - 上层 */}
+        <div className="bg-nb-deepest/40 hover:bg-nb-deepest/60 rounded-2xl px-4 py-3 transition-all duration-150 focus-within:bg-nb-deepest/60 focus-within:ring-2 focus-within:ring-brand-500/30 border border-nb-border/50 focus-within:border-brand-500/40">
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={t('chat.placeholder')}
-            rows={1}
+            rows={3}
             disabled={status !== 'connected'}
-            className="flex-1 bg-transparent text-sm text-nb-text placeholder:text-nb-text-muted outline-none resize-none max-h-32 scrollbar-thin disabled:opacity-50 leading-relaxed"
+            className="w-full bg-transparent text-sm text-nb-text placeholder:text-nb-text-muted outline-none resize-none max-h-32 scrollbar-thin disabled:opacity-50 leading-relaxed"
           />
-          {/* 模型选择器 */}
-          <ModelSelector
-            currentModel={currentModel}
-            currentProvider={currentProvider}
-            onSelect={handleModelChange}
-            onOpenSettings={onOpenSettings}
-          />
-          {/* 发送/停止按钮 */}
-          {isStreaming ? (
-            <div className="relative group">
-              <button
-                className="shrink-0 p-2 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-amber-500/30 transition-all"
-              >
-                <Loader2 size={16} className="animate-spin text-amber-500" />
-              </button>
-              {/* hover 时显示停止按钮 */}
-              <button
-                onClick={stopGeneration}
-                className="absolute inset-0 shrink-0 p-2 rounded-xl bg-gradient-to-br from-red-500/20 to-red-600/20 border border-red-500/30 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center shadow-sm"
-                title="停止生成"
-              >
-                <Square size={14} className="text-red-500" />
-              </button>
-            </div>
-          ) : (
-            <button onClick={() => sendMessage(undefined)}
-              disabled={!input.trim() || status !== 'connected'}
-              className="shrink-0 p-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-700 hover:from-brand-500 hover:to-brand-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150 shadow-sm hover:shadow-md hover:shadow-brand-500/20 active:scale-95 disabled:hover:shadow-none"
-            >
-              <Send size={16} className={input.trim() ? '' : 'opacity-50'} />
-            </button>
-          )}
         </div>
+
+        {/* 功能按钮区域 - 下层 */}
+        <div className="flex items-center justify-between mt-2 px-1">
+          {/* 左侧：文件和工具按钮 */}
+          <div className="flex items-center gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.doc,.docx,.txt,.xlsx,.xls"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={status !== 'connected'}
+              className="shrink-0 p-1.5 rounded-lg text-nb-text-dim hover:text-brand-500 hover:bg-brand-500/10 transition-all duration-150 disabled:opacity-50"
+              title="上传文件"
+            >
+              <Paperclip size={16} />
+            </button>
+          </div>
+
+          {/* 右侧：模型选择和发送 */}
+          <div className="flex items-center gap-2">
+            {/* 模型选择器 */}
+            <ModelSelector
+              currentModel={currentModel}
+              currentProvider={currentProvider}
+              onSelect={handleModelChange}
+              onOpenSettings={onOpenSettings}
+            />
+
+            {/* 发送/停止按钮 */}
+            {isStreaming ? (
+              <div className="relative group">
+                <button
+                  className="shrink-0 p-2 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-amber-500/30 transition-all"
+                >
+                  <Loader2 size={16} className="animate-spin text-amber-500" />
+                </button>
+                {/* hover 时显示停止按钮 */}
+                <button
+                  onClick={stopGeneration}
+                  className="absolute inset-0 shrink-0 p-2 rounded-xl bg-gradient-to-br from-red-500/20 to-red-600/20 border border-red-500/30 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center shadow-sm"
+                  title="停止生成"
+                >
+                  <Square size={14} className="text-red-500" />
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => sendMessage(undefined)}
+                disabled={!input.trim() || status !== 'connected'}
+                className="shrink-0 px-4 py-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-700 hover:from-brand-500 hover:to-brand-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150 shadow-sm hover:shadow-md hover:shadow-brand-500/20 active:scale-95 disabled:hover:shadow-none flex items-center gap-1.5"
+              >
+                <Send size={14} />
+                <span className="text-xs font-medium">发送</span>
+              </button>
+            )}
+          </div>
+        </div>
+
         <p className="text-[11px] text-nb-text-muted/70 mt-1.5 pl-2">
           {t('chat.hint')}
         </p>

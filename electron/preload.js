@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   restoreSession: (id)  => ipcRenderer.invoke('session:restore', id),
   newSession:     ()    => ipcRenderer.invoke('session:new'),
 
+  // ── Cross-tab analysis ────────────────────────────────────────────────────
+  getAllTabsContent: () => ipcRenderer.invoke('tabs:getAllContent'),
+
   // ── Context menu ──────────────────────────────────────────────────────────
   showContextMenu: (params) => ipcRenderer.invoke('context-menu:show', params),
 

@@ -31,6 +31,30 @@ export default {
           'text-dim':   'rgb(var(--nb-text-dim) / <alpha-value>)',
           'text-muted': 'rgb(var(--nb-text-muted) / <alpha-value>)',
         },
+        // ── shadcn/ui compatible tokens ─────────────────────────────────────
+        // AI SDK Elements uses these
+        background: 'rgb(var(--nb-base) / <alpha-value>)',
+        foreground: 'rgb(var(--nb-text) / <alpha-value>)',
+        card: {
+          DEFAULT: 'rgb(var(--nb-card) / <alpha-value>)',
+          foreground: 'rgb(var(--nb-text) / <alpha-value>)',
+        },
+        muted: {
+          DEFAULT: 'rgb(var(--nb-raised) / <alpha-value>)',
+          foreground: 'rgb(var(--nb-text-soft) / <alpha-value>)',
+        },
+        border: 'rgb(var(--nb-border) / <alpha-value>)',
+        input: 'rgb(var(--nb-raised) / <alpha-value>)',
+        accent: {
+          DEFAULT: 'rgb(var(--nb-raised) / <alpha-value>)',
+          foreground: 'rgb(var(--nb-text) / <alpha-value>)',
+        },
+        ring: 'rgb(var(--brand-500) / <alpha-value>)',
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
       },
     },
   },

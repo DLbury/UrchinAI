@@ -145,3 +145,30 @@ async def update_model(body: ModelUpdate):
         cfg["agents"]["defaults"]["provider"] = body.provider
     _write_config(cfg)
     return {"ok": True}
+
+
+@router.get("/agent-limits")
+async def get_agent_limits():
+    """Get agent limits configuration (maxTokens, maxIterations)."""
+    raw = _read_config()
+    defaults = raw.get("agents", {}).get("defaults", {})
+    return {
+        "maxTokens": defaults.get("maxTokens", 0),
+        "maxIterations": defaults.get("maxIterations", 0),
+    }
+
+
+class AgentLimitsUpdate(BaseModel):
+    maxTokens: int = 0
+    maxIterations: int = 0
+
+
+@router.put("/agent-limits")
+async def update_agent_limits(body: AgentLimitsUpdate):
+    """Update agent limits configuration."""
+    cfg = _read_config()
+    cfg.setdefault("agents", {}).setdefault("defaults", {})
+    cfg["agents"]["defaults"]["maxTokens"] = body.maxTokens
+    cfg["agents"]["defaults"]["maxIterations"] = body.maxIterations
+    _write_config(cfg)
+    return {"ok": True}

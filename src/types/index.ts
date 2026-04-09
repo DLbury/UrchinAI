@@ -10,6 +10,7 @@ export interface ChatMessage {
   content: string
   files?: AttachedFile[]
   toolCalls?: ToolCall[]
+  reasoning?: string  // AI 思考/推理过程
   createdAt: number
 }
 
@@ -22,7 +23,7 @@ export interface ToolCall {
 }
 
 export interface WSMessage {
-  type: 'token' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'history_cleared' | 'stopped'
+  type: 'token' | 'reasoning' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'history_cleared' | 'stopped'
   content?: string
   name?: string
   args?: Record<string, unknown>
