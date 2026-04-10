@@ -20,6 +20,17 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install pyinstaller
+          pip install -r backend/requirements.txt
+
       - name: Install dependencies
         run: npm ci
 
@@ -48,6 +59,17 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install pyinstaller
+          pip install -r backend/requirements.txt
 
       - name: Install dependencies
         run: npm ci
