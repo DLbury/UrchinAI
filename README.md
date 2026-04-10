@@ -12,57 +12,120 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-**"打开 GitHub，搜索 React 项目，帮我整理前 10 个热门仓库"** — AI 自动完成
+**"Open GitHub, search for React projects, and organize the top 10 popular repositories"** — AI handles it automatically
 
 </div>
 
 ---
 
-## UrchinAI 能做什么？
+## What is UrchinAI?
 
-### 🎯 核心能力
+**UrchinAI** is an AI-powered desktop browser that lets you control web browsing with natural language. No more clicking through menus or memorizing keyboard shortcuts—just tell the AI what you want to do.
 
-| 场景 | 你只需要说 | AI 自动完成 |
-|------|-----------|------------|
-| **日常浏览** | "打开淘宝搜索机械键盘" | 导航 → 搜索 → 展示结果 |
-| **信息收集** | "帮我查今天的科技新闻并总结" | 搜索 → 抓取 → 总结 |
-| **表单填写** | "帮我填写这个注册表单" | 识别字段 → 智能填写 |
-| **数据分析** | "把这个表格数据整理成 Markdown" | 提取 → 格式化 → 输出 |
-| **网页理解** | "这个页面主要讲了什么？" | 分析 → 总结 → 解答 |
+Whether you're a developer researching APIs, a marketer analyzing competitors, a student gathering research, or a professional automating repetitive tasks, UrchinAI adapts to your workflow and makes web interaction effortless.
 
-### ✨ 特色功能
+## What Can UrchinAI Do?
 
-| 功能 | 描述 |
-|------|------|
-| **🗣️ 自然语言控制** | 无需学习脚本，用日常语言控制浏览器 |
-| **🤖 多 AI 模型支持** | OpenAI、Claude、DeepSeek、Gemini 等 15+ 提供商 |
-| **🧠 AI 记忆系统** | 记住你的偏好，越用越懂你 |
-| **📚 智能书签分类** | AI 自动分类书签，告别混乱 |
-| **🔧 技能扩展** | 安装技能包，扩展 AI 能力 |
-| **🔌 MCP 协议** | 连接外部工具和服务 |
-| **📖 AI 阅读模式** | 一键总结网页内容 |
-| **🛡️ 隐私优先** | 本地运行，数据不上传 |
+### 🎯 Core Capabilities
+
+| Scenario | Just Say | AI Completes |
+|----------|----------|--------------|
+| **Daily Browsing** | "Open Amazon and search for mechanical keyboards" | Navigate → Search → Display results |
+| **Information Gathering** | "Find today's tech news and summarize it" | Search → Scrape → Summarize |
+| **Form Filling** | "Help me fill out this registration form" | Recognize fields → Smart fill |
+| **Data Extraction** | "Convert this table data to Markdown" | Extract → Format → Output |
+| **Web Analysis** | "What is this page mainly about?" | Analyze → Summarize → Answer |
+| **Research** | "Search for recent AI papers on arXiv" | Navigate → Search → Extract |
+| **Shopping** | "Compare prices for this laptop across sites" | Multi-site search → Price comparison |
+| **Content Creation** | "Gather information for a blog post about climate change" | Research → Summarize → Structure |
+
+### ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **🗣️ Natural Language Control** | Control the browser with everyday language—no scripting needed |
+| **🤖 Multi-AI Support** | 15+ LLM providers: OpenAI, Claude, DeepSeek, Gemini, and more |
+| **🧠 AI Memory System** | Remembers your preferences and gets smarter over time |
+| **📚 Smart Bookmarking** | AI auto-categorizes bookmarks—no more clutter |
+| **🔧 Skill Extensions** | Install skill packs to extend AI capabilities |
+| **🔌 MCP Protocol** | Connect to external tools and services |
+| **📖 AI Reading Mode** | One-click webpage summarization |
+| **🛡️ Privacy First** | Runs locally, your data stays on your device |
+| **💬 WebSocket Streaming** | Real-time AI conversation with progress updates |
+| **🔄 Session Management** | Persistent chat sessions with full history |
 
 ---
 
-## 快速开始
+## Use Cases by Role
 
-### 下载安装
+### 👨‍💻 For Developers
 
-| 平台 | 下载 |
-|------|------|
-| Windows | `.exe` 安装包 + 便携版 |
-| Linux | `.deb` 安装包 |
-| macOS | 即将支持 |
+- **API Research**: "Find the Stripe API documentation for payment intents"
+- **Code Examples**: "Search GitHub for Python async examples and explain the best ones"
+- **Documentation**: "Open the React docs and find information about useEffect"
+- **Bug Hunting**: "Search Stack Overflow for this error message and show solutions"
+- **Tech Comparison**: "Compare Next.js and Nuxt.js features side by side"
 
-👉 [前往 Releases 下载最新版本](https://github.com/urchinai/browser/releases)
+### 📊 For Marketers
 
-### 配置 AI 模型
+- **Competitor Analysis**: "Research our top 3 competitors and create a feature comparison"
+- **Trend Research**: "Find trending topics in AI for this week"
+- **Content Ideas**: "Search for popular blog post topics in the fitness niche"
+- **SEO Research**: "Analyze the top-ranking pages for 'best CRM software'"
+- **Review Monitoring**: "Check recent reviews for our product on G2"
 
-首次使用需要配置 AI 模型。打开设置 → 模型与服务商：
+### 🎓 For Students & Researchers
+
+- **Academic Research**: "Search Google Scholar for papers on machine learning in healthcare"
+- **Note Taking**: "Extract key points from this Wikipedia article and create notes"
+- **Citation Gathering**: "Find 5 credible sources about climate change impacts"
+- **Translation**: "Translate this German research paper to English"
+- **Data Collection**: "Gather statistics about global internet usage from multiple sources"
+
+### 💼 For Business Professionals
+
+- **Meeting Prep**: "Research this company before my meeting—find their products and recent news"
+- **Report Generation**: "Collect quarterly earnings data for FAANG companies"
+- **Email Drafting**: "Help me draft a professional email requesting a partnership"
+- **Contract Review**: "Highlight key terms in this Terms of Service page"
+- **Travel Planning**: "Find flights from NYC to London for next week and compare prices"
+
+### 🛒 For Shoppers
+
+- **Price Comparison**: "Compare iPhone 15 prices on Amazon, Best Buy, and Apple"
+- **Review Analysis**: "Summarize the top reviews for this product"
+- **Feature Research**: "Find all laptops with RTX 4060 under $1500"
+- **Deal Hunting**: "Search for discount codes for Nike"
+- **Product Research**: "Is this brand eco-friendly? Find their sustainability page"
+
+### 🎨 For Creatives
+
+- **Inspiration**: "Find award-winning website designs on Awwwards"
+- **Asset Gathering**: "Search for free stock photos of mountains"
+- **Color Research**: "Find trending color palettes for 2025"
+- **Font Discovery**: "Find Google Fonts similar to Helvetica"
+- **Tutorial Finding**: "Search YouTube for advanced Photoshop techniques"
+
+---
+
+## Quick Start
+
+### Download & Install
+
+| Platform | Download |
+|----------|----------|
+| Windows | `.exe` installer + portable |
+| Linux | `.deb` package |
+| macOS | Coming soon |
+
+👉 [Download latest release](https://github.com/urchinai/browser/releases)
+
+### Configure AI Model
+
+On first use, configure your AI model. Open Settings → Models & Providers:
 
 ```json
-// 配置示例（配置文件位于 ~/.nanobot/config.json）
+// Example config (located at ~/.nanobot/config.json)
 {
   "providers": {
     "deepseek": {
@@ -79,193 +142,220 @@
 }
 ```
 
-### 推荐模型
+### Recommended Models
 
-| 模型 | 特点 | 适用场景 |
-|------|------|---------|
-| **DeepSeek V3** | 高性价比，中文友好 | 日常使用 |
-| **Claude Sonnet 4.6** | 推理能力强，支持视觉 | 复杂任务 |
-| **GPT-4o** | 综合能力强 | 通用场景 |
-| **Kimi** | 长上下文 | 文档处理 |
-| **GLM-4** | 中文优化 | 国内用户 |
-
----
-
-## 使用示例
-
-### 💬 对话式控制
-
-```
-用户: 帮我在京东搜索 MacBook Pro，按价格排序
-AI: [导航到京东] → [搜索 MacBook Pro] → [点击价格排序] → 完成！
-
-用户: 帮我把这个页面的产品参数整理成表格
-AI: [分析页面] → [提取参数] → [生成 Markdown 表格]
-
-用户: 帮我找到这个作者的 Twitter 主页
-AI: [搜索作者名] → [找到 Twitter 链接] → [打开主页]
-```
-
-### 🎯 自动化场景
-
-<details>
-<summary><b>📊 竞品分析</b></summary>
-
-```
-"帮我搜索 XX 行业的前 5 家公司，
- 收集他们的产品信息和价格，
- 整理成一个对比表格"
-```
-AI 自动：搜索 → 访问官网 → 提取信息 → 整理输出
-</details>
-
-<details>
-<summary><b>📰 每日资讯</b></summary>
-
-```
-"帮我看看今天有什么科技新闻，
- 总结成 5 条要点"
-```
-AI 自动：打开新闻站 → 抓取头条 → 总结要点
-</details>
-
-<details>
-<summary><b>🛒 购物比价</b></summary>
-
-```
-"帮我对比这款手机在京东和淘宝的价格"
-```
-AI 自动：搜索商品 → 提取价格 → 对比展示
-</details>
+| Model | Strengths | Best For |
+|-------|-----------|----------|
+| **DeepSeek V3** | Cost-effective, Chinese-friendly | Daily use |
+| **Claude Sonnet 4.6** | Strong reasoning, vision support | Complex tasks |
+| **GPT-4o** | Well-rounded capabilities | General purpose |
+| **Kimi** | Long context | Document processing |
+| **GLM-4** | Chinese-optimized | China users |
 
 ---
 
-## 功能截图
+## Usage Examples
+
+### 💬 Conversational Control
+
+```
+User: Help me search for MacBook Pro on JD.com and sort by price
+AI: [Navigate to JD] → [Search MacBook Pro] → [Click price sort] → Done!
+
+User: Extract product specs from this page into a table
+AI: [Analyze page] → [Extract specs] → [Generate Markdown table]
+
+User: Find the Twitter profile of this author
+AI: [Search author name] → [Find Twitter link] → [Open profile]
+
+User: Summarize this 50-page PDF for me
+AI: [Process document] → [Extract key points] → [Create summary]
+```
+
+### 🎯 Automation Scenarios
+
+<details>
+<summary><b>📊 Competitor Analysis</b></summary>
+
+```
+"Research the top 5 companies in the CRM industry,
+ collect their product features and pricing,
+ and create a comparison table"
+```
+AI: Search → Visit websites → Extract info → Format output
+</details>
+
+<details>
+<summary><b>📰 Daily News Digest</b></summary>
+
+```
+"Check today's tech news headlines
+ and summarize them into 5 key points"
+```
+AI: Open news sites → Scrape headlines → Summarize points
+</details>
+
+<details>
+<summary><b>🛒 Price Comparison</b></summary>
+
+```
+"Compare prices for this phone on Amazon and Best Buy"
+```
+AI: Search products → Extract prices → Compare and display
+</details>
+
+<details>
+<summary><b>📄 Document Processing</b></summary>
+
+```
+"Extract all links from this page and organize them by category"
+```
+AI: Scan page → Extract links → Categorize → Output list
+</details>
+
+<details>
+<summary><b>🔍 Research Automation</b></summary>
+
+```
+"Find 10 academic papers about renewable energy from 2024"
+```
+AI: Search academic DB → Filter by date → Collect results
+</details>
+
+---
+
+## Screenshots
 
 <div align="center">
 
-### 主界面 - AI 对话控制浏览器
+### Main Interface - AI Chat Control
 <img src="docs/screenshots/screenshot-main.png" alt="Main Interface" width="700"/>
 
-### 设置面板 - 配置 AI 模型
+### Settings Panel - AI Model Configuration
 <img src="docs/screenshots/screenshot-settings.png" alt="Settings" width="450"/>
 
 </div>
 
 ---
 
-## 开发者
+## For Developers
 
-### 本地运行
+### Local Development
 
 ```bash
-# 克隆项目
+# Clone repository
 git clone https://github.com/urchinai/browser.git
 cd browser
 
-# 安装依赖
+# Install dependencies
 npm install
 pip install -r backend/requirements.txt
 
-# 开发模式
+# Dev mode
 npm run dev
 
-# 构建发布
+# Build release
 npm run dist
 ```
 
-### 项目结构
+### Project Structure
 
 ```
 urchinai-browser/
-├── electron/           # Electron 主进程
-├── src/                # React 前端
-├── backend/            # Python FastAPI 后端
-│   ├── agent/          # AI Agent 实现
+├── electron/           # Electron main process
+├── src/                # React frontend
+├── backend/            # Python FastAPI backend
+│   ├── agent/          # AI Agent implementation
 │   └── api/            # REST API
-└── release/            # 构建输出
+└── release/            # Build output
 ```
 
-### 技术栈
+### Tech Stack
 
-- **前端**: React + TypeScript + TailwindCSS
-- **后端**: Python + FastAPI + LiteLLM
-- **桌面**: Electron
-- **AI**: 支持多种 LLM 提供商
+- **Frontend**: React + TypeScript + TailwindCSS
+- **Backend**: Python + FastAPI + LiteLLM
+- **Desktop**: Electron
+- **AI**: Multi-LLM provider support
 
 ---
 
 ## Roadmap
 
-- [x] 自然语言浏览器控制
-- [x] 多 LLM 提供商支持
-- [x] AI 记忆系统
-- [x] 智能书签分类
-- [x] MCP 协议支持
-- [x] 技能系统
-- [ ] 语音输入
-- [ ] 浏览器扩展
-- [ ] 云同步
-- [ ] 移动端伴侣
+- [x] Natural language browser control
+- [x] Multi-LLM provider support
+- [x] AI memory system
+- [x] Smart bookmark categorization
+- [x] MCP protocol support
+- [x] Skill system
+- [ ] Voice input
+- [ ] Browser extension
+- [ ] Cloud sync
+- [ ] Mobile companion
 
 ---
 
-## 常见问题
+## FAQ
 
 <details>
-<summary><b>必须配置 AI 才能使用吗？</b></summary>
+<summary><b>Is AI configuration required?</b></summary>
 
-不是必须的。UrchinAI 也可以作为普通浏览器使用，AI 功能是可选增强。
+No. UrchinAI works as a regular browser without AI. AI features are optional enhancements.
 </details>
 
 <details>
-<summary><b>我的数据安全吗？</b></summary>
+<summary><b>Is my data secure?</b></summary>
 
-所有浏览数据都保存在本地。只有你发送给 AI 的对话会传递给你配置的 LLM 提供商。
+All browsing data stays local. Only your AI conversations are sent to your configured LLM provider.
 </details>
 
 <details>
-<summary><b>支持哪些 AI 模型？</b></summary>
+<summary><b>Which AI models are supported?</b></summary>
 
-通过 LiteLLM 支持：OpenAI、Anthropic、Google、DeepSeek、智谱、月之暗面、MiniMax、Groq、OpenRouter 等主流提供商，以及任何 OpenAI 兼容的 API。
+Via LiteLLM: OpenAI, Anthropic, Google, DeepSeek, Zhipu, Moonshot, MiniMax, Groq, OpenRouter, and any OpenAI-compatible API.
 </details>
 
 <details>
-<summary><b>如何添加新技能？</b></summary>
+<summary><b>How do I add new skills?</b></summary>
 
-设置 → 技能管理 → 从 URL 安装。支持安装社区贡献的 skill.md 文件。
+Settings → Skills Management → Install from URL. Supports community-contributed skill.md files.
+</details>
+
+<details>
+<summary><b>Can I use it without an internet connection?</b></summary>
+
+Basic browsing requires internet. AI features need connectivity to your configured LLM provider.
 </details>
 
 ---
 
-## 贡献
+## Contributing
 
-欢迎贡献代码、报告问题、提出建议！
+Contributions welcome! Report issues, suggest features, or submit PRs.
 
 ```bash
-# Fork 并克隆
+# Fork and clone
 git clone https://github.com/YOUR_USERNAME/browser.git
 
-# 创建分支
+# Create branch
 git checkout -b feature/your-feature
 
-# 提交 PR
+# Submit PR
 ```
 
 ---
 
-## 致谢
+## Acknowledgments
 
-- [Electron](https://www.electronjs.org/) - 跨平台桌面应用
-- [LiteLLM](https://github.com/BerriAI/litellm) - 统一 LLM 接口
-- [FastAPI](https://fastapi.tiangolo.com/) - Python Web 框架
-- [React](https://react.dev/) - UI 框架
+- [Electron](https://www.electronjs.org/) - Cross-platform desktop apps
+- [LiteLLM](https://github.com/BerriAI/litellm) - Unified LLM interface
+- [FastAPI](https://fastapi.tiangolo.com/) - Python web framework
+- [React](https://react.dev/) - UI framework
 
 ---
 
 <div align="center">
 
-**[下载使用](https://github.com/urchinai/browser/releases) · [反馈问题](https://github.com/urchinai/browser/issues) · [加入讨论](https://github.com/urchinai/browser/discussions)**
+**[Download](https://github.com/urchinai/browser/releases) · [Issues](https://github.com/urchinai/browser/issues) · [Discussions](https://github.com/urchinai/browser/discussions)**
 
 Made with ❤️ by UrchinAI Team
 
