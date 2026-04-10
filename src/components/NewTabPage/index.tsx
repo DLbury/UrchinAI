@@ -1063,7 +1063,15 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
             {sessions.map(session => (
               <div
                 key={session.id}
-                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+                onClick={() => switchSession(session.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  const menu = window.confirm(`删除会话 "${session.name}"?`)
+                  if (menu && sessions.length > 1) {
+                    deleteSession(session.id)
+                  }
+                }}
+                className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
                   session.id === currentSessionId
                     ? 'bg-brand-500/10 text-brand-400'
                     : 'hover:bg-nb-raised text-nb-text-soft'
@@ -1091,12 +1099,9 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
                   />
                 ) : (
                   <>
-                    <button
-                      onClick={() => switchSession(session.id)}
-                      className="flex-1 text-left text-xs truncate"
-                    >
+                    <span className="flex-1 text-left text-xs truncate">
                       {session.name}
-                    </button>
+                    </span>
                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
                       <button
                         onClick={(e) => {
