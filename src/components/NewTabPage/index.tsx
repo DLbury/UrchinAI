@@ -947,7 +947,7 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
       name: `新会话 ${sessions.length + 1}`,
       createdAt: Date.now()
     }
-    setSessions(prev => [...prev, newSession])
+    setSessions(prev => [newSession, ...prev])
     setCurrentSessionId(newSession.id)
     setMessagesBySession(prev => ({ ...prev, [newSession.id]: [] }))
   }
