@@ -47,6 +47,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Cross-tab analysis ────────────────────────────────────────────────────
   getAllTabsContent: () => ipcRenderer.invoke('tabs:getAllContent'),
 
+  // ── DOM Element Picker ────────────────────────────────────────────────────
+  startDomPicker: () => ipcRenderer.invoke('domPicker:start'),
+  stopDomPicker: () => ipcRenderer.invoke('domPicker:stop'),
+  onDomPicked: (callback) => {
+    const handler = (_e, data) => callback(data)
+    ipcRenderer.on('domPicker:picked', handler)
+    return () => ipcRenderer.removeListener('domPicker:picked', handler)
+  },
+
   // ── Context menu ──────────────────────────────────────────────────────────
   showContextMenu: (params) => ipcRenderer.invoke('context-menu:show', params),
 

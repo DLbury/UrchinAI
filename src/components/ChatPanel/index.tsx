@@ -637,6 +637,8 @@ export default function ChatPanel({
   const [editingName, setEditingName] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; data: string; type: string }[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [isDomPicking, setIsDomPicking] = useState(false)
+  const [pickedElement, setPickedElement] = useState<any>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -686,6 +688,50 @@ export default function ChatPanel({
       }
     } catch {}
   }, [])
+
+  // DOM 元素选取功能
+  useEffect(() => {
+    const eAPI = (window as any).electronAPI
+    if (!eAPI?.onDomPicked) return
+
+    const unsubscribe = eAPI.onDomPicked((data: any) => {
+      setIsDomPicking(false)
+      setPickedElement(data)
+      // 将选取的元素信息插入到输入框
+      if (data) {
+        const elementInfo = `[选中元素: ${data.tagName}${data.id ? '#' + data.id : ''}] ${data.text?.slice(0, 50) || ''}`
+        setInput(prev => {
+          const newInput = prev ? prev + '\n' + elementInfo : elementInfo
+          return newInput
+        })
+      }
+    })
+
+    return () => unsubscribe()
+  }, [])
+
+  const startDomPicker = async () => {
+    const eAPI = (window as any).electronAPI
+    if (!eAPI?.startDomPicker) return
+    try {
+      setIsDomPicking(true)
+      await eAPI.startDomPicker()
+    } catch (err) {
+      console.error('Failed to start DOM picker:', err)
+      setIsDomPicking(false)
+    }
+  }
+
+  const stopDomPicker = async () => {
+    const eAPI = (window as any).electronAPI
+    if (!eAPI?.stopDomPicker) return
+    try {
+      await eAPI.stopDomPicker()
+      setIsDomPicking(false)
+    } catch (err) {
+      console.error('Failed to stop DOM picker:', err)
+    }
+  }
 
   // 开发环境：立即加载；生产环境：等待 backend:ready
   useEffect(() => {
@@ -1317,6 +1363,21 @@ export default function ChatPanel({
               title="上传文件"
             >
               <Paperclip size={16} />
+            </button>
+            <button
+              onClick={isDomPicking ? stopDomPicker : startDomPicker}
+              disabled={status !== 'connected'}
+              className={`shrink-0 p-1.5 rounded-lg transition-all duration-150 disabled:opacity-50 ${
+                isDomPicking
+                  ? 'text-brand-500 bg-brand-500/20 animate-pulse'
+                  : 'text-nb-text-dim hover:text-brand-500 hover:bg-brand-500/10'
+              }`}
+              title={isDomPicking ? '点击取消选取' : '选取网页元素'}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+                <path d="M13 13l9 9"/>
+              </svg>
             </button>
           </div>
 

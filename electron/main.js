@@ -1259,6 +1259,242 @@ function registerIpc() {
     const conn = wsConnections.get(sessionId)
     if (conn) conn.listeners.add(e.sender.id)
   })
+
+  // ── DOM Element Picker ────────────────────────────────────────────────────
+  let domPickerMode = false
+  const DOM_PICKER_SCRIPT = `
+    (function() {
+      if (window.__domPicker) return;
+
+      const picker = {
+        overlay: null,
+        selectedElement: null,
+
+        createOverlay() {
+          const div = document.createElement('div');
+          div.id = '__dom-picker-overlay';
+          div.style.cssText =
+            'position:fixed;top:0;left:0;width:100%;height:100%;' +
+            'pointer-events:none;z-index:2147483647;cursor:crosshair;';
+          document.body.appendChild(div);
+          return div;
+        },
+
+        highlightElement(el) {
+          if (this.selectedElement) {
+            this.selectedElement.style.outline = '';
+            this.selectedElement.style.backgroundColor = '';
+          }
+          if (el && el !== document.body) {
+            this.selectedElement = el;
+            el.style.outline = '3px solid #63b3ed';
+            el.style.backgroundColor = 'rgba(99,179,237,0.15)';
+          }
+        },
+
+        getSelector(el) {
+          if (!el || el === document.body) return 'body';
+
+          const path = [];
+          let current = el;
+
+          while (current && current !== document.body) {
+            let selector = current.tagName.toLowerCase();
+
+            if (current.id) {
+              selector += '#' + current.id;
+              path.unshift(selector);
+              break;
+            }
+
+            if (current.className) {
+              const classes = current.className.toString().split(/\\s+/).filter(c => c && !c.startsWith('__dom')).slice(0, 2);
+              if (classes.length) selector += '.' + classes.join('.');
+            }
+
+            const parent = current.parentElement;
+            if (parent) {
+              const siblings = Array.from(parent.children).filter(s => s.tagName === current.tagName);
+              if (siblings.length > 1) {
+                const index = siblings.indexOf(current) + 1;
+                selector += ':nth-of-type(' + index + ')';
+              }
+            }
+
+            path.unshift(selector);
+            current = current.parentElement;
+          }
+
+          return path.join(' > ');
+        },
+
+        getElementInfo(el) {
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          return {
+            tagName: el.tagName.toLowerCase(),
+            id: el.id || null,
+            className: el.className || null,
+            selector: this.getSelector(el),
+            text: (el.textContent || '').trim().slice(0, 200),
+            html: el.outerHTML.slice(0, 500),
+            attributes: Array.from(el.attributes).reduce((acc, attr) => {
+              if (!attr.name.startsWith('__dom')) acc[attr.name] = attr.value;
+              return acc;
+            }, {}),
+            boundingRect: {
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height
+            }
+          };
+        },
+
+        handleMouseOver(e) {
+          e.stopPropagation();
+          e.preventDefault();
+          this.highlightElement(e.target);
+        },
+
+        handleClick(e) {
+          e.stopPropagation();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+
+          const info = this.getElementInfo(e.target);
+
+          // Restore styles
+          if (this.selectedElement) {
+            this.selectedElement.style.outline = '';
+            this.selectedElement.style.backgroundColor = '';
+          }
+
+          // Send result via custom event that Electron can capture
+          window.__domPickerResult = info;
+          window.postMessage({ type: '__DOM_PICKER_RESULT', data: info }, '*');
+
+          return false;
+        },
+
+        start() {
+          this.overlay = this.createOverlay();
+          document.body.style.cursor = 'crosshair';
+
+          this._mouseover = this.handleMouseOver.bind(this);
+          this._click = this.handleClick.bind(this);
+
+          document.addEventListener('mouseover', this._mouseover, true);
+          document.addEventListener('click', this._click, true);
+          document.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); }, true);
+          document.addEventListener('mouseup', (e) => { e.stopPropagation(); e.preventDefault(); }, true);
+        },
+
+        stop() {
+          if (this.overlay) {
+            this.overlay.remove();
+            this.overlay = null;
+          }
+          document.body.style.cursor = '';
+
+          if (this.selectedElement) {
+            this.selectedElement.style.outline = '';
+            this.selectedElement.style.backgroundColor = '';
+          }
+
+          document.removeEventListener('mouseover', this._mouseover, true);
+          document.removeEventListener('click', this._click, true);
+        }
+      };
+
+      window.__domPicker = picker;
+      picker.start();
+    })()
+  `
+
+  // Store picker result listener
+  let domPickerListener = null
+
+  ipcMain.handle('domPicker:start', async () => {
+    const wc = getActiveWc()
+    if (!wc) return { ok: false, error: 'no active webview' }
+
+    domPickerMode = true
+
+    // Inject picker script
+    await wc.executeJavaScript(DOM_PICKER_SCRIPT).catch(err => {
+      console.error('[domPicker] Inject failed:', err)
+      return { ok: false, error: String(err) }
+    })
+
+    // Set up message listener for picker result
+    if (domPickerListener) {
+      wc.removeListener('ipc-message', domPickerListener)
+    }
+
+    domPickerListener = (e, channel, data) => {
+      if (channel === '__DOM_PICKER_RESULT') {
+        domPickerMode = false
+        mainWindow?.webContents?.send('domPicker:picked', data)
+      }
+    }
+
+    // Listen for console messages (picker uses postMessage which appears as console in webview)
+    const consoleListener = (e, level, message, line, sourceId) => {
+      if (!domPickerMode) return
+      try {
+        const msg = message.toString()
+        if (msg.includes('__DOM_PICKER_RESULT')) {
+          const match = msg.match(/__DOM_PICKER_RESULT(.+)/)
+          if (match) {
+            const data = JSON.parse(match[1])
+            domPickerMode = false
+            wc.removeListener('console-message', consoleListener)
+            mainWindow?.webContents?.send('domPicker:picked', data)
+          }
+        }
+      } catch (_) {}
+    }
+
+    wc.on('console-message', consoleListener)
+
+    // Also inject a listener for postMessage
+    await wc.executeJavaScript(`
+      (function() {
+        if (window.__domPickerMessageListener) return;
+        window.__domPickerMessageListener = function(e) {
+          if (e.data && e.data.type === '__DOM_PICKER_RESULT') {
+            console.log('__DOM_PICKER_RESULT' + JSON.stringify(e.data.data));
+          }
+        };
+        window.addEventListener('message', window.__domPickerMessageListener);
+      })()
+    `).catch(() => {})
+
+    return { ok: true }
+  })
+
+  ipcMain.handle('domPicker:stop', async () => {
+    const wc = getActiveWc()
+    if (!wc) return { ok: false, error: 'no active webview' }
+
+    domPickerMode = false
+
+    await wc.executeJavaScript(`
+      (function() {
+        if (window.__domPicker) {
+          window.__domPicker.stop();
+          window.__domPicker = null;
+        }
+        if (window.__domPickerMessageListener) {
+          window.removeEventListener('message', window.__domPickerMessageListener);
+          window.__domPickerMessageListener = null;
+        }
+      })()
+    `).catch(() => {})
+
+    return { ok: true }
+  })
 }
 
 // ─── Window ───────────────────────────────────────────────────────────────────
