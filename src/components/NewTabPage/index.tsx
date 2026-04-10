@@ -1337,7 +1337,7 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
             {/* Bookmarks - 2xN Grid Layout */}
             {hasBookmarks ? (
               <div className="space-y-3">
-                {Object.entries(grouped).slice(0, 2).map(([catId, items]) => {
+                {Object.entries(grouped).map(([catId, items]) => {
                   const catName = getCategoryDisplayName(catId)
                   const catIcon = getCategoryIcon(catId)
                   return (
