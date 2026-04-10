@@ -455,12 +455,12 @@ function QuickCard({ title, url, favicon, emoji, onNavigate }: {
   onNavigate: (url: string) => void
 }) {
   return (
-    <div className="group relative flex flex-col items-center gap-2 cursor-pointer" onClick={() => onNavigate(url)}>
-      <div className="w-14 h-14 rounded-2xl bg-nb-card/80 hover:bg-nb-raised/80 border border-nb-border/50 hover:border-nb-border
-                      flex items-center justify-center transition-all duration-150 shadow-sm hover:shadow-md hover:-translate-y-0.5">
+    <div className="group flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-nb-raised/50 transition-all duration-150" onClick={() => onNavigate(url)}>
+      <div className="w-10 h-10 rounded-xl bg-nb-card border border-nb-border/50 group-hover:border-nb-border
+                      flex items-center justify-center shrink-0 transition-all duration-150 shadow-sm group-hover:shadow-md">
         <SiteFavicon url={url} favicon={favicon} emoji={emoji} />
       </div>
-      <span className="text-xs text-nb-text-dim group-hover:text-nb-text-soft text-center max-w-[72px] truncate transition-colors">
+      <span className="text-xs text-nb-text-soft group-hover:text-nb-text truncate flex-1 min-w-0 transition-colors">
         {title}
       </span>
     </div>
@@ -476,13 +476,13 @@ function LiveClock() {
 
   const hm  = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
   const sec = now.toLocaleTimeString('zh-CN', { second: '2-digit' }).replace(/.*:/, '')
-  const date = now.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
+  const date = now.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', weekday: 'short' })
 
   return (
-    <div className="flex flex-col items-center gap-1 select-none">
-      <div className="flex items-end gap-1">
-        <span className="text-7xl font-thin text-nb-text tabular-nums tracking-tight">{hm}</span>
-        <span className="text-3xl font-thin text-nb-text-dim tabular-nums mb-2">:{sec}</span>
+    <div className="flex items-center justify-between gap-2 select-none px-1">
+      <div className="flex items-baseline gap-1">
+        <span className="text-4xl font-light text-nb-text tabular-nums tracking-tight">{hm}</span>
+        <span className="text-xl font-light text-nb-text-dim tabular-nums">:{sec}</span>
       </div>
       <p className="text-sm text-nb-text-muted">{date}</p>
     </div>
@@ -1330,26 +1330,24 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
           >
             <div className="w-0.5 h-4 rounded-full bg-nb-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
-          <div className="p-4 space-y-6">
-            {/* Clock */}
-            <div className="text-center py-2">
-              <LiveClock />
-            </div>
+          <div className="p-4 space-y-5">
+            {/* Clock - Top, single line */}
+            <LiveClock />
 
-            {/* Bookmarks */}
+            {/* Bookmarks - 2xN Grid Layout */}
             {hasBookmarks ? (
-              <div className="space-y-4">
-                {Object.entries(grouped).slice(0, 3).map(([catId, items]) => {
+              <div className="space-y-3">
+                {Object.entries(grouped).slice(0, 2).map(([catId, items]) => {
                   const catName = getCategoryDisplayName(catId)
                   const catIcon = getCategoryIcon(catId)
                   return (
                     <div key={catId}>
-                      <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                      <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5 px-1">
                         <span>{catIcon}</span>
                         <span>{catName}</span>
                       </h3>
-                      <div className="grid grid-cols-4 gap-2">
-                        {items.slice(0, 8).map((bm, i) => (
+                      <div className="grid grid-cols-2 gap-1">
+                        {items.slice(0, 6).map((bm, i) => (
                           <QuickCard
                             key={i}
                             title={bm.title || bm.url}
@@ -1365,8 +1363,8 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
               </div>
             ) : (
               <div>
-                <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-3">{t('newTab.defaultLinks')}</h3>
-                <div className="grid grid-cols-4 gap-2">
+                <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-2 px-1">{t('newTab.defaultLinks')}</h3>
+                <div className="grid grid-cols-2 gap-1">
                   {DEFAULT_LINKS.map((link, i) => (
                     <QuickCard
                       key={i}
@@ -1380,25 +1378,23 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
               </div>
             )}
 
-            {/* Recent History */}
+            {/* Recent History - Vertical List, max 6 items */}
             {recent.length > 0 && (
               <div>
-                <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5 px-1">
                   <Clock size={11} /> {t('newTab.recent')}
                 </h3>
-                <div className="flex gap-2 flex-wrap">
+                <div className="space-y-1">
                   {recent.slice(0, 6).map((h, i) => (
                     <button
                       key={i}
                       onClick={() => onNavigate(h.url)}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-nb-base border border-nb-border
-                                 hover:bg-nb-raised hover:border-nb-text-muted text-nb-text-dim hover:text-nb-text-soft
-                                 text-xs transition-all"
+                      className="flex items-center gap-2 w-full px-2 py-1.5 rounded-lg hover:bg-nb-raised/50 text-nb-text-dim hover:text-nb-text-soft text-xs transition-all text-left"
                     >
                       {h.favicon
-                        ? <img src={h.favicon} className="w-3.5 h-3.5 object-contain" alt="" onError={e => { (e.target as HTMLImageElement).style.display='none' }} />
-                        : <Globe size={12} className="opacity-60" />}
-                      <span className="max-w-[100px] truncate">{h.title || h.url}</span>
+                        ? <img src={h.favicon} className="w-4 h-4 object-contain shrink-0" alt="" onError={e => { (e.target as HTMLImageElement).style.display='none' }} />
+                        : <Globe size={14} className="opacity-60 shrink-0" />}
+                      <span className="truncate flex-1 min-w-0">{h.title || h.url}</span>
                     </button>
                   ))}
                 </div>
