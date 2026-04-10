@@ -24,12 +24,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
       - name: Install Python dependencies
         run: |
+          pip install --upgrade pip
           pip install pyinstaller
-          pip install -r backend/requirements.txt
+          pip install --no-cache-dir -r backend/requirements.txt
+
+      - name: Verify Python packages
+        run: |
+          pip list | grep -E "(nanobot|litellm|anthropic|openai)"
+          python -c "import nanobot_ai; print('nanobot_ai location:', nanobot_ai.__file__)"
 
       - name: Install dependencies
         run: npm ci
@@ -40,8 +45,16 @@ jobs:
       - name: Build backend
         run: npm run build:backend:linux
 
+      - name: Check backend binary size
+        run: |
+          ls -lh backend/urchinai-backend || echo "Backend binary not found"
+
       - name: Build Electron app
         run: npm run dist:linux
+
+      - name: Check release size
+        run: |
+          ls -lh release/*.deb
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -64,12 +77,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
       - name: Install Python dependencies
         run: |
+          pip install --upgrade pip
           pip install pyinstaller
-          pip install -r backend/requirements.txt
+          pip install --no-cache-dir -r backend/requirements.txt
+
+      - name: Verify Python packages
+        run: |
+          pip list | findstr -E "(nanobot|litellm|anthropic|openai)"
+          python -c "import nanobot_ai; print('nanobot_ai location:', nanobot_ai.__file__)"
 
       - name: Install dependencies
         run: npm ci
@@ -80,8 +98,16 @@ jobs:
       - name: Build backend
         run: npm run build:backend:win
 
+      - name: Check backend binary size
+        run: |
+          Get-ChildItem backend/urchinai-backend.exe | Select-Object Name, Length
+
       - name: Build Electron app
         run: npm run dist:win
+
+      - name: Check release size
+        run: |
+          Get-ChildItem release/*.exe | Select-Object Name, Length
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -109,7 +135,7 @@ jobs:
           path: release/windows
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             release/linux/*.deb
