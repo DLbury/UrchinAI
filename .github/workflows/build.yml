@@ -34,7 +34,7 @@ jobs:
       - name: Verify Python packages
         run: |
           pip list | grep -E "(nanobot|litellm|anthropic|openai)"
-          python -c "import nanobot_ai; print('nanobot_ai location:', nanobot_ai.__file__)"
+          python -c "import nanobot; print('nanobot location:', nanobot.__file__)"
 
       - name: Install dependencies
         run: npm ci
