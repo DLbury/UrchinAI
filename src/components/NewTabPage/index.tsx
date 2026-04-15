@@ -3,9 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { Search, Clock, Globe, X, Send, Trash2, Bot, User, ChevronDown, Plus, Edit2, Paperclip, LayoutGrid, Check, Copy, Wifi, WifiOff, Loader2, Square, Settings, Sparkles } from 'lucide-react'
 import { useWebSocket } from '../../hooks/useWebSocket'
 import MarkdownRenderer from '../common/MarkdownRenderer'
-import { listCategories, listScripts, getConfig, updateModel, getProviders, listChatSessions, saveChatSessions, getSearchEngine } from '../../api/client'
-import type { ChatMessage, ToolCall, WSMessage } from '../../types'
+import { listCategories, listScripts, getConfig, updateModel, getProviders, getSearchEngine } from '../../api/client'
+import type { ChatMessage, ChatSession, ToolCall, WSMessage } from '../../types'
 import { MessageAttachments, InputAttachments } from '../AttachmentsAdapter'
+import { ToolCallsGroup } from '../ToolCallsGroup'
 import {
   Reasoning,
   ReasoningTrigger,
@@ -16,12 +17,6 @@ import {
 
 interface CategoryInfo { id: string; name: string; name_en: string; icon: string }
 
-interface ChatSession {
-  id: string
-  name: string
-  createdAt: number
-}
-
 interface BookmarkItem { url: string; title: string; favicon: string; category?: string; createdAt: number }
 interface HistoryItem  { url: string; title: string; favicon: string; visitedAt: number }
 
@@ -29,6 +24,15 @@ interface Props {
   onNavigate:  (url: string) => void
   bookmarks:   BookmarkItem[]
   history:     HistoryItem[]
+  sessions:    ChatSession[]
+  currentSessionId: string
+  messagesBySession: Record<string, ChatMessage[]>
+  onSwitchSession: (id: string) => void
+  onNewSession: () => void
+  onRenameSession: (id: string, name: string) => void
+  onDeleteSession: (id: string) => void
+  onMessagesChange: (msgs: Record<string, ChatMessage[]>) => void
+  onAgentOperatingChange?: (operating: boolean) => void
 }
 
 // ── Auto-categorization (fallback when no category field) ──────────────────────
@@ -161,56 +165,6 @@ const PROVIDER_LABELS: Record<string, string> = {
 interface Script { id: string; name: string; prompt: string; icon: string }
 interface ProviderConfig { apiKey?: string; apiBase?: string; models?: { label: string; value: string }[] }
 
-// ── Tool Call Card Component ──────────────────────────────────────────────────
-
-function ToolCallCard({ tool }: { tool: ToolCall }) {
-  const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
-
-  const statusConfig = {
-    pending: { icon: Loader2, className: 'animate-spin text-yellow-500', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
-    running: { icon: Loader2, className: 'animate-spin text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
-    done: { icon: Check, className: 'text-green-500', bg: 'bg-green-500/10', border: 'border-green-500/30' },
-    error: { icon: X, className: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/30' },
-  }[tool.status]
-
-  const StatusIcon = statusConfig.icon
-
-  return (
-    <div className={`mt-2 rounded-lg border ${statusConfig.border} ${statusConfig.bg} overflow-hidden`}>
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-2 w-full px-3 py-2.5 text-left hover:bg-nb-raised/30 transition-colors"
-      >
-        <StatusIcon size={14} className={statusConfig.className} />
-        <span className="font-mono text-sm text-brand-400 font-medium">{tool.name}</span>
-        <span className="text-nb-text-muted text-xs flex-1 truncate">
-          ({Object.keys(tool.args).join(', ')})
-        </span>
-        {expanded ? <ChevronDown size={14} className="text-nb-text-dim" /> : <span className="text-nb-text-dim">›</span>}
-      </button>
-      {expanded && (
-        <div className="border-t border-nb-border/50 px-3 py-3 space-y-3 bg-nb-card/40">
-          <div>
-            <p className="text-nb-text-muted mb-1.5 uppercase tracking-wide text-[10px] font-medium">{t('chat.toolArgs') || '参数'}</p>
-            <pre className="text-nb-text-soft whitespace-pre-wrap break-all font-mono text-[11px] bg-nb-raised/50 rounded-md p-2">
-              {JSON.stringify(tool.args, null, 2)}
-            </pre>
-          </div>
-          {tool.result !== undefined && (
-            <div>
-              <p className="text-nb-text-muted mb-1.5 uppercase tracking-wide text-[10px] font-medium">{t('chat.toolResult') || '结果'}</p>
-              <pre className="text-nb-text-soft whitespace-pre-wrap break-all font-mono text-[11px] bg-nb-raised/50 rounded-md p-2 max-h-40 overflow-y-auto">
-                {tool.result}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Message Bubble Component ──────────────────────────────────────────────────
 
 function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: boolean }) {
@@ -295,7 +249,11 @@ function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: b
             {formatTime(msg.createdAt)}
           </p>
         )}
-        {msg.toolCalls?.map((tool) => <ToolCallCard key={tool.id} tool={tool} />)}
+        {msg.toolCalls && msg.toolCalls.length > 0 && (
+          <div className="mt-2">
+            <ToolCallsGroup tools={msg.toolCalls} />
+          </div>
+        )}
       </div>
       {isUser && (
         <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-nb-raised to-nb-hover flex items-center justify-center mt-0.5 shadow-sm">
@@ -491,15 +449,24 @@ function LiveClock() {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
+export default function NewTabPage({
+  onNavigate, bookmarks, history,
+  sessions, currentSessionId, messagesBySession: propMessagesBySession,
+  onSwitchSession, onNewSession, onRenameSession, onDeleteSession, onMessagesChange,
+  onAgentOperatingChange
+}: Props) {
   const { t, i18n } = useTranslation()
   const [search, setSearch] = useState('')
   const [categories, setCategories] = useState<CategoryInfo[]>([])
 
-  // Chat state
-  const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [currentSessionId, setCurrentSessionId] = useState<string>('')
-  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({})
+  // Chat state - messages are managed locally for streaming performance,
+  // but synced to parent via onMessagesChange
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>(propMessagesBySession)
+
+  // Sync local messages with parent when props change (e.g. from ChatPanel)
+  useEffect(() => {
+    setMessagesBySession(propMessagesBySession)
+  }, [propMessagesBySession])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [scripts, setScripts] = useState<Script[]>(DEFAULT_SCRIPTS)
@@ -579,47 +546,6 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     listCategories().then(setCategories).catch(() => {})
   }, [])
 
-  // Initialize chat sessions - load existing and create a new one as current (只在首次加载时创建新会话)
-  useEffect(() => {
-    listChatSessions().then(data => {
-      const loadedSessions = data.sessions || []
-      const msgs: Record<string, ChatMessage[]> = {}
-      for (const s of loadedSessions) {
-        msgs[s.id] = (s.messages || []) as ChatMessage[]
-      }
-
-      // 检查是否有保存的当前会话ID
-      const savedCurrentId = data.currentSessionId
-      // 如果有保存的当前会话且存在，恢复它；否则创建新会话
-      if (savedCurrentId && msgs[savedCurrentId]) {
-        setSessions(loadedSessions)
-        setMessagesBySession(msgs)
-        setCurrentSessionId(savedCurrentId)
-      } else if (loadedSessions.length > 0) {
-        // 有历史会话但没有当前会话，使用第一个作为当前
-        setSessions(loadedSessions)
-        setMessagesBySession(msgs)
-        setCurrentSessionId(loadedSessions[0].id)
-      } else {
-        // 没有任何会话，创建新会话
-        const newSessionId = `session-${Date.now()}`
-        const newSession: ChatSession = {
-          id: newSessionId,
-          name: `新会话 1`,
-          createdAt: Date.now()
-        }
-        setSessions([newSession])
-        setMessagesBySession({ [newSessionId]: [] })
-        setCurrentSessionId(newSessionId)
-      }
-    }).catch(() => {
-      const newSessionId = `session-${Date.now()}`
-      setSessions([{ id: newSessionId, name: '新会话', createdAt: Date.now() }])
-      setMessagesBySession({ [newSessionId]: [] })
-      setCurrentSessionId(newSessionId)
-    })
-  }, [])
-
   // Load config
   useEffect(() => {
     const loadConfig = async () => {
@@ -653,28 +579,14 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     }).catch(() => {})
   }, [])
 
-  // Persist messages - 只在有内容的会话时触发保存
+  // Persist messages - sync to parent when local messages change
   useEffect(() => {
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
     persistTimerRef.current = setTimeout(() => {
-      // 只保存有消息的会话
-      const fullSessions = sessions
-        .filter(s => {
-          const msgs = messagesBySession[s.id]
-          return msgs && msgs.length > 0
-        })
-        .map(s => ({
-          ...s,
-          messages: messagesBySession[s.id] || [],
-        }))
-      // 如果有任何会话有消息，或者当前会话有消息，才保存
-      const currentMessages = messagesBySession[currentSessionId]
-      if (fullSessions.length > 0 || (currentMessages && currentMessages.length > 0)) {
-        saveChatSessions(fullSessions, currentSessionId).catch(() => {})
-      }
+      onMessagesChange(messagesBySession)
     }, 800)
     return () => { if (persistTimerRef.current) clearTimeout(persistTimerRef.current) }
-  }, [messagesBySession, sessions, currentSessionId])
+  }, [messagesBySession, onMessagesChange])
 
   // WebSocket message handling
   useEffect(() => {
@@ -687,6 +599,7 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
         flushTokenBuffer()
       } else if (msg.type === 'tool_call') {
         flushTokenBuffer()
+        onAgentOperatingChange?.(true)
         const toolCall: ToolCall = {
           id: msg.call_id ?? Math.random().toString(36).slice(2),
           name: msg.name ?? '', args: msg.args ?? {}, status: 'running',
@@ -714,9 +627,11 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
         }
       } else if (msg.type === 'done') {
         flushTokenBuffer()
+        onAgentOperatingChange?.(false)
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
       } else if (msg.type === 'error') {
         flushTokenBuffer()
+        onAgentOperatingChange?.(false)
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
         setMessagesBySession(prev => ({
           ...prev,
@@ -724,6 +639,7 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
         }))
       } else if (msg.type === 'stopped') {
         flushTokenBuffer()
+        onAgentOperatingChange?.(false)
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
       } else if (msg.type === 'history_cleared') {
         tokenBufferRef.current = ''
@@ -940,29 +856,19 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
     } catch {}
   }
 
-  // Session management
+  // Session management - delegate list changes to parent, keep local messages in sync
   const createNewSession = () => {
-    const newSession: ChatSession = {
-      id: `session-${Date.now()}`,
-      name: `新会话 ${sessions.length + 1}`,
-      createdAt: Date.now()
-    }
-    setSessions(prev => [newSession, ...prev])
-    setCurrentSessionId(newSession.id)
-    setMessagesBySession(prev => ({ ...prev, [newSession.id]: [] }))
+    onNewSession()
+    // messages for the new session will be initialized by parent and synced via useEffect
   }
 
   const renameSession = (id: string, name: string) => {
-    setSessions(prev => prev.map(s => s.id === id ? { ...s, name } : s))
+    onRenameSession(id, name)
   }
 
   const deleteSession = (id: string) => {
     if (sessions.length <= 1) return
-    setSessions(prev => prev.filter(s => s.id !== id))
-    if (currentSessionId === id) {
-      const remaining = sessions.filter(s => s.id !== id)
-      setCurrentSessionId(remaining[0]?.id || '')
-    }
+    onDeleteSession(id)
     setMessagesBySession(prev => {
       const next = { ...prev }
       delete next[id]
@@ -971,7 +877,7 @@ export default function NewTabPage({ onNavigate, bookmarks, history }: Props) {
   }
 
   const switchSession = (id: string) => {
-    setCurrentSessionId(id)
+    onSwitchSession(id)
     setEditingSessionId(null)
   }
 

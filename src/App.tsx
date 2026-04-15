@@ -12,6 +12,7 @@ import { v4 as uuidv4 } from 'uuid'
 import ChatPanel from './components/ChatPanel'
 import SettingsModal from './components/SettingsModal'
 import NewTabPage from './components/NewTabPage'
+import type { ChatMessage, ChatSession } from './types'
 import {
   listBookmarks, addBookmark, removeBookmark, updateBookmarkCategory,
   listHistory, addHistory, clearHistory, listCategories,
@@ -47,6 +48,11 @@ type ElectronAPI = {
   clearAllCookies:     () => Promise<{ ok: boolean; error?: string }>
   showContextMenu:     (params: Record<string, unknown>) => Promise<void>
   detachTab:           (url: string, screenX: number, screenY: number, theme?: string) => Promise<boolean>
+  // Find in page (Ctrl+F)
+  findInPage:          (text: string, options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }) => Promise<{ requestId: number; matches: number }>
+  stopFindInPage:      (action?: 'clearSelection' | 'keepSelection' | 'activateSelection') => Promise<void>
+  onFoundInPage:       (cb: (result: { requestId: number; matches: number; activeMatchOrdinal: number; selectionArea: { x: number; y: number; width: number; height: number } }) => void) => () => void
+  onFindShortcut:      (cb: () => void) => () => void
   // Window controls (frameless mode)
   windowMinimize:      () => Promise<void>
   windowMaximize:      () => Promise<void>
@@ -67,7 +73,6 @@ interface TabState {
 interface BookmarkItem { url: string; title: string; favicon: string; category?: string; createdAt: number }
 interface HistoryItem  { url: string; title: string; favicon: string; visitedAt: number }
 interface SessionItem  { id: string; name: string; createdAt: number; tabs: {url:string;title:string}[] }
-interface ChatSession  { id: string; name: string; createdAt: number; messages: Array<{ id: string; role: string; content: string; toolCalls?: unknown[]; files?: unknown[]; createdAt: number }> }
 interface CookieItem   { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly: boolean; sameSite: string; expirationDate?: number }
 interface SetCookieOpts { url: string; name: string; value: string; domain?: string; path?: string; secure?: boolean; httpOnly?: boolean; sameSite?: string; expirationDate?: number }
 
@@ -553,10 +558,17 @@ export default function App() {
   const [historyOpen, setHistoryOpen]   = useState(false)
   const [bookmarksOpen, setBookmarksOpen] = useState(false)
   const [adBlockOn, setAdBlockOn]       = useState(true)
+  const [agentOperating, setAgentOperating] = useState(false)
 
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [searchEngine, setSearchEngine] = useState('bing')
+
+  // ── Find in page (Ctrl+F) state ────────────────────────────────────────────
+  const [findOpen, setFindOpen] = useState(false)
+  const [findText, setFindText] = useState('')
+  const [findResult, setFindResult] = useState({ matches: 0, activeMatch: 0 })
+  const findInputRef = useRef<HTMLInputElement>(null)
 
   // Load search engine config
   useEffect(() => {
@@ -568,26 +580,45 @@ export default function App() {
   // ── Chat Sessions (AI conversation management) ──────────────────────────────
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string>('')
+  const [chatMessagesBySession, setChatMessagesBySession] = useState<Record<string, ChatMessage[]>>({})
   const chatInitRef = useRef(false)
 
   // Load chat sessions from backend
   const loadChatSessions = useCallback(() => {
     listChatSessions().then(data => {
-      if (data.sessions.length > 0) {
-        setChatSessions(data.sessions)
-        setCurrentChatSessionId(data.currentSessionId || data.sessions[0].id)
+      const loadedSessions = data.sessions || []
+      const msgs: Record<string, ChatMessage[]> = {}
+      for (const s of loadedSessions) {
+        msgs[s.id] = (s.messages || []) as ChatMessage[]
+      }
+      if (loadedSessions.length > 0) {
+        setChatSessions(loadedSessions as ChatSession[])
+        setChatMessagesBySession(msgs)
+        setCurrentChatSessionId(data.currentSessionId || loadedSessions[0].id)
       } else {
-        const defaultSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
+        const defaultSession: ChatSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
         setChatSessions([defaultSession])
+        setChatMessagesBySession({ [defaultSession.id]: [] })
         setCurrentChatSessionId(defaultSession.id)
       }
     }).catch(() => {
       // Backend not ready or no data: still ensure we have a usable sessionId
-      const fallbackSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
+      const fallbackSession: ChatSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
       setChatSessions([fallbackSession])
+      setChatMessagesBySession({ [fallbackSession.id]: [] })
       setCurrentChatSessionId(fallbackSession.id)
     })
   }, [])
+
+  const persistSessions = useCallback((nextSessions: ChatSession[], nextMsgs: Record<string, ChatMessage[]>, nextCurrentId: string) => {
+    const fullSessions = nextSessions.map(s => ({ ...s, messages: nextMsgs[s.id] || [] }))
+    saveChatSessions(fullSessions, nextCurrentId).catch(() => {})
+  }, [])
+
+  const handleMessagesChange = useCallback((nextMsgs: Record<string, ChatMessage[]>) => {
+    setChatMessagesBySession(nextMsgs)
+    persistSessions(chatSessions, nextMsgs, currentChatSessionId)
+  }, [chatSessions, currentChatSessionId, persistSessions])
 
   useEffect(() => {
     if (chatInitRef.current) return
@@ -740,6 +771,15 @@ export default function App() {
   const navigate = useCallback((raw: string) => {
     let url = raw.trim()
     if (!url) return
+    // Internal schemes must not go through the search-engine branch (e.g. about:blank → wrong query URL).
+    if (/^about:/i.test(url) || /^view-source:/i.test(url) || /^chrome-extension:/i.test(url)) {
+      setUrlInput(url)
+      setTabs(prev => prev.map(t => t.id === activeIdRef.current ? { ...t, url } : t))
+      const wv = webviewsRef.current.get(activeIdRef.current)
+      if (wv) wv.loadURL(url).catch(() => {})
+      else setTabs(prev => prev.map(t => t.id === activeIdRef.current ? { ...t, src: url } : t))
+      return
+    }
     if (!/^[a-z][a-z\d+\-.]*:\/\//i.test(url)) {
       if (url.includes('.') && !url.includes(' ')) url = 'https://' + url
       else {
@@ -785,7 +825,12 @@ export default function App() {
     if (theme === 'system') {
       theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
     }
-    eAPI?.detachTab(tab.url || '', screenX, screenY, theme)
+    const wv = webviewsRef.current.get(tab.id)
+    let live = ''
+    try { live = wv?.getURL?.() ?? '' } catch (_) { live = '' }
+    const candidate = (live && live !== 'about:blank' && live !== 'about:srcdoc') ? live : (tab.url || '')
+    const detachUrl = (candidate && candidate !== 'about:blank' && candidate !== 'about:srcdoc') ? candidate : ''
+    eAPI?.detachTab(detachUrl, screenX, screenY, theme)
     closeTab(tab.id)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -816,11 +861,74 @@ export default function App() {
     return () => { off1(); off2(); off3(); off4(); off5() }
   }, [createTab, closeTab, switchTab])
 
+  // ── Find in page (Ctrl+F) ────────────────────────────────────────────────
+  // Listen for found-in-page results
+  useEffect(() => {
+    if (!eAPI?.onFoundInPage) return
+    const unsubscribe = eAPI.onFoundInPage((result) => {
+      setFindResult({
+        matches: result.matches,
+        activeMatch: result.activeMatchOrdinal
+      })
+    })
+    return () => unsubscribe?.()
+  }, [])
+
+  // Listen for Ctrl+F shortcut from main process (works even when webview is focused)
+  useEffect(() => {
+    if (!eAPI?.onFindShortcut) return
+    const unsubscribe = eAPI.onFindShortcut(() => {
+      setFindOpen(true)
+      setTimeout(() => findInputRef.current?.focus(), 0)
+    })
+    return () => unsubscribe?.()
+  }, [])
+
+  // Escape key to close find (only when find is open)
+  useEffect(() => {
+    if (!findOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeFind()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [findOpen])
+
+  const handleFind = useCallback(async (text: string) => {
+    setFindText(text)
+    if (!eAPI?.findInPage || !text) {
+      setFindResult({ matches: 0, activeMatch: 0 })
+      return
+    }
+    await eAPI.findInPage(text, { forward: true, findNext: false })
+  }, [])
+
+  const findNext = useCallback(async () => {
+    if (!eAPI?.findInPage || !findText) return
+    await eAPI.findInPage(findText, { forward: true, findNext: true })
+  }, [findText])
+
+  const findPrevious = useCallback(async () => {
+    if (!eAPI?.findInPage || !findText) return
+    await eAPI.findInPage(findText, { forward: false, findNext: true })
+  }, [findText])
+
+  const closeFind = useCallback(async () => {
+    setFindOpen(false)
+    setFindText('')
+    setFindResult({ matches: 0, activeMatch: 0 })
+    if (eAPI?.stopFindInPage) {
+      await eAPI.stopFindInPage('clearSelection')
+    }
+  }, [])
+
   // ── Open initialUrl from detached tab (new window created by drag) ──────────
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const initialUrl = params.get('initialUrl')
-    if (initialUrl) navigate(initialUrl)
+    if (initialUrl && initialUrl !== 'about:blank' && initialUrl !== 'about:srcdoc') navigate(initialUrl)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -1080,6 +1188,10 @@ export default function App() {
 
         {/* Browser area — webview elements live here (normal HTML, z-index works) */}
         <div className="flex-1 relative bg-nb-deepest overflow-hidden">
+          {/* Agent operating breathing glow */}
+          {agentOperating && (
+            <div className="absolute inset-0 z-[5] agent-operating-glow rounded-none" />
+          )}
 
           {/* All tab webviews — visibility toggled via CSS (keeps them alive).
               Blank/new tabs have pointer-events disabled so NewTabPage below
@@ -1114,7 +1226,90 @@ export default function App() {
                 onNavigate={navigate}
                 bookmarks={bookmarks}
                 history={history}
+                sessions={chatSessions}
+                currentSessionId={currentChatSessionId}
+                messagesBySession={chatMessagesBySession}
+                onSwitchSession={setCurrentChatSessionId}
+                onNewSession={() => {
+                  const newSession = { id: uuidv4(), name: `会话 ${chatSessions.length + 1}`, createdAt: Date.now(), messages: [] }
+                  const nextSessions = [...chatSessions, newSession]
+                  const nextMsgs = { ...chatMessagesBySession, [newSession.id]: [] }
+                  setChatSessions(nextSessions)
+                  setChatMessagesBySession(nextMsgs)
+                  setCurrentChatSessionId(newSession.id)
+                  persistSessions(nextSessions, nextMsgs, newSession.id)
+                }}
+                onRenameSession={(id, name) => {
+                  const nextSessions = chatSessions.map(s => s.id === id ? { ...s, name } : s)
+                  setChatSessions(nextSessions)
+                  persistSessions(nextSessions, chatMessagesBySession, currentChatSessionId)
+                }}
+                onDeleteSession={(id) => {
+                  if (chatSessions.length <= 1) return
+                  const filtered = chatSessions.filter(s => s.id !== id)
+                  const nextMsgs = { ...chatMessagesBySession }
+                  delete nextMsgs[id]
+                  const nextCurrentId = currentChatSessionId === id ? filtered[0].id : currentChatSessionId
+                  setChatSessions(filtered)
+                  setChatMessagesBySession(nextMsgs)
+                  if (currentChatSessionId === id) {
+                    setCurrentChatSessionId(filtered[0].id)
+                  }
+                  persistSessions(filtered, nextMsgs, nextCurrentId)
+                }}
+                onMessagesChange={handleMessagesChange}
+                onAgentOperatingChange={setAgentOperating}
               />
+            </div>
+          )}
+
+          {/* Find in page (Ctrl+F) search box */}
+          {findOpen && (
+            <div className="absolute top-3 right-3 z-50 w-80 bg-nb-card/95 backdrop-blur-sm border border-nb-border rounded-lg shadow-xl p-3">
+              <div className="flex items-center gap-2">
+                <Search size={16} className="text-nb-text-dim" />
+                <input
+                  ref={findInputRef}
+                  type="text"
+                  value={findText}
+                  onChange={(e) => handleFind(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') findNext()
+                    if (e.key === 'Escape') closeFind()
+                  }}
+                  placeholder="搜索页面..."
+                  className="flex-1 bg-transparent text-sm text-nb-text outline-none placeholder:text-nb-text-muted"
+                  autoFocus
+                />
+                {findResult.matches > 0 && (
+                  <span className="text-xs text-nb-text-muted whitespace-nowrap">
+                    {findResult.activeMatch} / {findResult.matches}
+                  </span>
+                )}
+                <button
+                  onClick={findPrevious}
+                  disabled={findResult.matches === 0}
+                  className="p-1 rounded hover:bg-nb-hover disabled:opacity-30 text-nb-text-dim"
+                  title="上一个"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  onClick={findNext}
+                  disabled={findResult.matches === 0}
+                  className="p-1 rounded hover:bg-nb-hover disabled:opacity-30 text-nb-text-dim"
+                  title="下一个"
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <button
+                  onClick={closeFind}
+                  className="p-1 rounded hover:bg-nb-hover text-nb-text-dim"
+                  title="关闭"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1145,41 +1340,38 @@ export default function App() {
               sessionId={currentChatSessionId}
               sessions={chatSessions}
               currentSessionId={currentChatSessionId}
+              messagesBySession={chatMessagesBySession}
               onSwitchSession={setCurrentChatSessionId}
               onNewSession={() => {
                 const newSession = { id: uuidv4(), name: `会话 ${chatSessions.length + 1}`, createdAt: Date.now(), messages: [] }
-                setChatSessions(prev => {
-                  const updated = [...prev, newSession]
-                  saveChatSessions(updated, newSession.id).catch(() => {})
-                  return updated
-                })
+                const nextSessions = [...chatSessions, newSession]
+                const nextMsgs = { ...chatMessagesBySession, [newSession.id]: [] }
+                setChatSessions(nextSessions)
+                setChatMessagesBySession(nextMsgs)
                 setCurrentChatSessionId(newSession.id)
+                persistSessions(nextSessions, nextMsgs, newSession.id)
               }}
               onRenameSession={(id, name) => {
-                setChatSessions(prev => {
-                  const updated = prev.map(s => s.id === id ? { ...s, name } : s)
-                  saveChatSessions(updated, currentChatSessionId).catch(() => {})
-                  return updated
-                })
+                const nextSessions = chatSessions.map(s => s.id === id ? { ...s, name } : s)
+                setChatSessions(nextSessions)
+                persistSessions(nextSessions, chatMessagesBySession, currentChatSessionId)
               }}
               onDeleteSession={(id) => {
-                setChatSessions(prev => {
-                  const filtered = prev.filter(s => s.id !== id)
-                  if (filtered.length === 0) {
-                    const newSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
-                    setCurrentChatSessionId(newSession.id)
-                    saveChatSessions([newSession], newSession.id).catch(() => {})
-                    return [newSession]
-                  }
-                  const newCurrentId = currentChatSessionId === id ? filtered[0].id : currentChatSessionId
-                  if (currentChatSessionId === id) {
-                    setCurrentChatSessionId(filtered[0].id)
-                  }
-                  saveChatSessions(filtered, newCurrentId).catch(() => {})
-                  return filtered
-                })
+                if (chatSessions.length <= 1) return
+                const filtered = chatSessions.filter(s => s.id !== id)
+                const nextMsgs = { ...chatMessagesBySession }
+                delete nextMsgs[id]
+                const nextCurrentId = currentChatSessionId === id ? filtered[0].id : currentChatSessionId
+                setChatSessions(filtered)
+                setChatMessagesBySession(nextMsgs)
+                if (currentChatSessionId === id) {
+                  setCurrentChatSessionId(filtered[0].id)
+                }
+                persistSessions(filtered, nextMsgs, nextCurrentId)
               }}
+              onMessagesChange={handleMessagesChange}
               onAgentNavigate={handleAgentNavigate}
+              onAgentOperatingChange={setAgentOperating}
               sendRef={chatSendRef}
               onOpenSettings={openSettings}
             />

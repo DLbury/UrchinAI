@@ -4,6 +4,13 @@ export interface AttachedFile {
   type: string  // MIME type
 }
 
+export interface DOMElementInfo {
+  id: string
+  tagName: string
+  text: string
+  selector: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -11,6 +18,7 @@ export interface ChatMessage {
   files?: AttachedFile[]
   toolCalls?: ToolCall[]
   reasoning?: string  // AI 思考/推理过程
+  domElements?: DOMElementInfo[]  // 选中的 DOM 元素
   createdAt: number
 }
 
@@ -58,6 +66,13 @@ export interface Skill {
   id: string
   name: string
   description: string
+}
+
+export interface ChatSession {
+  id: string
+  name: string
+  createdAt: number
+  messages?: ChatMessage[]
 }
 
 export type PanelTab = 'config' | 'skills' | 'mcp'

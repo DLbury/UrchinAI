@@ -131,12 +131,31 @@ class BrowserTools:
         count = res.get("elementCount", 0)
         elems = res.get("elements", [])
         body  = res.get("bodyText", "")
+        vw    = res.get("viewportWidth", 0)
+        vh    = res.get("viewportHeight", 0)
+        scroll_y = res.get("scrollY", 0)
+        page_h   = res.get("pageHeight", 0)
+
+        pixels_above = scroll_y
+        pixels_below = max(0, page_h - scroll_y - vh)
+        pages_above  = pixels_above / max(vh, 1)
+        pages_below  = pixels_below / max(vh, 1)
+
         lines = [
             f"页面标题: {title}",
             f"URL: {url}",
-            f"共 {count} 个可交互元素（用 @N 引用）:",
-            *elems,
+            f"视口: {vw}x{vh}px",
         ]
+        if pixels_above > 4:
+            lines.append(f"... 上方还有 {pixels_above}px 内容（约 {pages_above:.1f} 屏）- 可滚动查看 ...")
+        else:
+            lines.append("[页面顶部]")
+        lines.append(f"共 {count} 个可交互元素（用 @N 引用）:")
+        lines.extend(elems)
+        if pixels_below > 4:
+            lines.append(f"... 下方还有 {pixels_below}px 内容（约 {pages_below:.1f} 屏）- 可滚动查看 ...")
+        else:
+            lines.append("[页面底部]")
         if body:
             lines += ["", "── 页面正文 ──", body]
         return "\n".join(lines)

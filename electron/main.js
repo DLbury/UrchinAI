@@ -25,10 +25,15 @@ const BRIDGE_PORT  = 8002
 let mainWindow  = null
 let backendProc = null
 let adBlockEnabled = true
+/** Set true after Python backend responds to health check (used for late-opened windows). */
+let backendHealthReady = false
 
 // Active webview per renderer window (set by renderer whenever tab changes)
 // key: BrowserWindow.webContents.id (renderer) -> value: webview guest webContentsId
 const activeWebContentsByWindow = new Map()
+
+// Partition for webviews (must be defined before use in createWindow/detachTab)
+const NANOBOT_PARTITION = 'persist:urchin'
 
 // ─── Nanobot Agent FX (injected into webviews) ────────────────────────────────
 
@@ -43,29 +48,65 @@ const NANOBOT_FX_SCRIPT = `
   S.textContent = \`
     #__nb-wrap { position:fixed; top:0; left:0; width:0; height:0; pointer-events:none; z-index:2147483647; }
 
-    /* ── SVG arrow cursor ── */
+    /* ── Sci-fi targeting cursor ── */
     #__nb-cur {
       position: fixed; display: none; pointer-events: none;
       z-index: 2147483647;
-      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.45)) drop-shadow(0 0 8px rgba(99,179,237,0.7));
+      width: 32px; height: 32px;
+      margin-left: -16px; margin-top: -16px;
       transition: left 0.28s cubic-bezier(.4,0,.2,1), top 0.28s cubic-bezier(.4,0,.2,1);
-      transform-origin: 3px 3px;
+      transform-origin: center center;
+    }
+    /* center glowing dot */
+    #__nb-cur::before {
+      content: '';
+      position: absolute; left: 50%; top: 50%;
+      width: 6px; height: 6px;
+      margin: -3px 0 0 -3px;
+      background: #22d3ee;
+      border-radius: 50%;
+      box-shadow: 0 0 10px 3px rgba(34,211,238,0.9), 0 0 22px 6px rgba(34,211,238,0.45);
+    }
+    /* outer rotating arc ring */
+    #__nb-cur::after {
+      content: '';
+      position: absolute; inset: 0;
+      border: 2.5px solid rgba(34,211,238,0.9);
+      border-radius: 50%;
+      border-top-color: transparent;
+      border-bottom-color: rgba(99,102,241,0.6);
+      box-shadow: 0 0 12px rgba(34,211,238,0.5), inset 0 0 10px rgba(34,211,238,0.15);
+      animation: __nb-cur-spin 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    /* secondary counter-rotating ring */
+    #__nb-cur i {
+      position: absolute; inset: 5px;
+      border: 1.5px solid rgba(129,140,248,0.5);
+      border-radius: 50%;
+      border-left-color: transparent;
+      border-right-color: rgba(34,211,238,0.7);
+      animation: __nb-cur-spin 3.5s linear infinite reverse;
+    }
+    @keyframes __nb-cur-spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
     }
     #__nb-cur.nb-click {
       animation: __nb-cur-click 0.35s ease-out forwards;
     }
     @keyframes __nb-cur-click {
       0%   { transform: scale(1); }
-      30%  { transform: scale(1.35) rotate(-12deg); }
-      60%  { transform: scale(0.92) rotate(5deg); }
-      100% { transform: scale(1) rotate(0deg); }
+      30%  { transform: scale(1.5); }
+      60%  { transform: scale(0.85); }
+      100% { transform: scale(1); }
     }
 
     /* ── Click ripple ring ── */
     .nb-ripple {
       position: fixed; pointer-events: none; z-index: 2147483646;
-      border: 2.5px solid rgba(99,179,237,0.85);
+      border: 2.5px solid rgba(34,211,238,0.9);
       border-radius: 50%;
+      box-shadow: 0 0 14px rgba(34,211,238,0.6);
       animation: __nb-ripple-anim 0.55s ease-out forwards;
     }
     @keyframes __nb-ripple-anim {
@@ -75,22 +116,22 @@ const NANOBOT_FX_SCRIPT = `
 
     /* ── Element highlights ── */
     .__nb-hl {
-      outline: 2.5px solid #63b3ed !important; outline-offset: 3px !important;
-      background-color: rgba(99,179,237,0.10) !important;
+      outline: 2.5px solid #22d3ee !important; outline-offset: 3px !important;
+      background-color: rgba(34,211,238,0.12) !important;
       border-radius: 4px !important; transition: all 0.12s ease !important;
     }
     .__nb-hl-type {
-      outline: 2.5px solid #68d391 !important; outline-offset: 3px !important;
-      background-color: rgba(104,211,145,0.09) !important;
+      outline: 2.5px solid #34d399 !important; outline-offset: 3px !important;
+      background-color: rgba(52,211,153,0.10) !important;
       border-radius: 4px !important; transition: all 0.12s ease !important;
     }
 
     /* ── Numbered labels ── */
     .__nb-lbl {
       position: absolute !important; pointer-events: none !important;
-      background: rgba(59,130,246,0.93); color: #fff;
+      background: rgba(34,211,238,0.93); color: #0f172a;
       font: 700 10px/1.5 monospace; padding: 0 5px; border-radius: 4px;
-      z-index: 2147483645; box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+      z-index: 2147483645; box-shadow: 0 0 10px rgba(34,211,238,0.5);
       animation: __nb-lbl-in 0.14s ease;
     }
     @keyframes __nb-lbl-in { from { opacity:0; transform:scale(.6); } to { opacity:1; transform:scale(1); } }
@@ -100,8 +141,8 @@ const NANOBOT_FX_SCRIPT = `
       animation: __nb-scan-anim 0.55s ease-out forwards !important;
     }
     @keyframes __nb-scan-anim {
-      0%   { outline: 1px solid rgba(99,179,237,.8) !important; background-color: rgba(99,179,237,.18) !important; }
-      100% { outline: 1px solid rgba(99,179,237,0)  !important; background-color: transparent !important; }
+      0%   { outline: 1px solid rgba(34,211,238,.8) !important; background-color: rgba(34,211,238,.18) !important; }
+      100% { outline: 1px solid rgba(34,211,238,0)  !important; background-color: transparent !important; }
     }
 
     /* ── Action toast ── */
@@ -112,7 +153,7 @@ const NANOBOT_FX_SCRIPT = `
       font: 600 13px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;
       z-index: 2147483644; pointer-events: none;
       backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1px solid rgba(99,179,237,0.28);
+      border: 1px solid rgba(34,211,238,0.32);
       box-shadow: 0 4px 28px rgba(0,0,0,0.45);
       white-space: nowrap; max-width: 440px; overflow: hidden; text-overflow: ellipsis;
       opacity: 0; transition: opacity 0.16s ease;
@@ -121,21 +162,10 @@ const NANOBOT_FX_SCRIPT = `
   \`;
   (document.head || document.documentElement).appendChild(S);
 
-  /* ── Build persistent cursor SVG ── */
+  /* ── Build persistent sci-fi cursor ── */
   const cur = document.createElement('div');
   cur.id = '__nb-cur';
-  cur.innerHTML = \`<svg width="26" height="32" viewBox="0 0 26 32" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3 2 L3 26 L9 19.5 L13.5 29 L17 27.5 L12.5 18 L20 18 Z"
-      fill="white" stroke="#1e3a5f" stroke-width="1.8" stroke-linejoin="round"/>
-    <path d="M3 2 L3 26 L9 19.5 L13.5 29 L17 27.5 L12.5 18 L20 18 Z"
-      fill="url(#nbGrad)" stroke="none" opacity="0.55"/>
-    <defs>
-      <linearGradient id="nbGrad" x1="3" y1="2" x2="20" y2="30" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#93c5fd"/>
-        <stop offset="100%" stop-color="#3b82f6"/>
-      </linearGradient>
-    </defs>
-  </svg>\`;
+  cur.innerHTML = \`<i></i>\`;
   document.body.appendChild(cur);
 
   /* ── Toast element ── */
@@ -461,6 +491,26 @@ function getActiveWc() {
   try { return webContents.fromId(activeId) } catch (_) { return null }
 }
 
+/** BrowserWindow that embeds this guest page, or the shell window for top-level webContents. */
+function browserWindowForPageContents(pageWc) {
+  if (!pageWc || pageWc.isDestroyed()) return null
+  let w = BrowserWindow.fromWebContents(pageWc)
+  if (w) return w
+  const host = pageWc.hostWebContents
+  if (host && !host.isDestroyed()) return BrowserWindow.fromWebContents(host)
+  return null
+}
+
+function broadcastToAllRenderers(channel, ...args) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, ...args)
+  }
+}
+
+function focusedOrMainShell() {
+  return BrowserWindow.getFocusedWindow() || mainWindow
+}
+
 function startBridgeServer() {
   const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json')
@@ -509,25 +559,96 @@ function startBridgeServer() {
           await ensureFX(wc)
           const dom = await wc.executeJavaScript(`
             (function() {
-              // Stamp each visible interactive element with a stable numeric ID
+              // ── cleanup old ids ──
               document.querySelectorAll('[data-nanobot-id]').forEach(el => el.removeAttribute('data-nanobot-id'));
-              const SEL = [
-                'a[href]:not([href=""])',
-                'button:not([disabled])',
-                'input:not([type="hidden"]):not([disabled])',
-                'select:not([disabled])',
-                'textarea:not([disabled])',
-                '[role="button"]:not([disabled])',
-                '[role="link"]','[role="checkbox"]','[role="radio"]',
-                '[role="menuitem"]','[role="tab"]','[role="option"]',
-                '[contenteditable="true"]',
-              ].join(',');
+
               const vw = window.innerWidth, vh = window.innerHeight;
+              const seen = new Set();
               const descs = [];
-              document.querySelectorAll(SEL).forEach(el => {
+
+              // ── React patch: mark root elements non-interactive ──
+              document.querySelectorAll('[data-reactroot], [data-reactid], [data-react-checksum], #root, #app, [id^="root-"], [id^="app-"]').forEach(el => {
+                el.setAttribute('data-nanobot-not-interactive', 'true');
+              });
+
+              // ── visibility ──
+              const isVisible = (el) => {
                 const r = el.getBoundingClientRect();
-                if (r.width<=0||r.height<=0) return;
-                if (r.bottom<0||r.top>vh||r.right<0||r.left>vw) return;
+                if (r.width <= 0 || r.height <= 0) return false;
+                if (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) return false;
+                const st = window.getComputedStyle(el);
+                if (st.visibility === 'hidden' || st.display === 'none' || parseFloat(st.opacity) === 0) return false;
+                return true;
+              };
+
+              // ── occlusion check (lightweight) ──
+              const isTopElement = (el) => {
+                const r = el.getBoundingClientRect();
+                const pts = [
+                  {x: r.left + r.width*0.5, y: r.top + r.height*0.5},
+                  {x: r.left + Math.min(4, r.width*0.2), y: r.top + Math.min(4, r.height*0.2)},
+                  {x: r.right - Math.min(4, r.width*0.2), y: r.bottom - Math.min(4, r.height*0.2)}
+                ];
+                for (const p of pts) {
+                  if (p.x < 0 || p.y < 0 || p.x > vw || p.y > vh) continue;
+                  const top = document.elementFromPoint(p.x, p.y);
+                  if (el === top || el.contains(top)) return true;
+                }
+                return false;
+              };
+
+              const isDisabled = (el) => el.disabled || el.readOnly || el.inert || el.getAttribute('aria-disabled') === 'true';
+
+              // ── cursor heuristics (page-agent style) ──
+              const INTERACTIVE_CURSORS = new Set([
+                'pointer','move','text','grab','grabbing','cell','copy','alias','all-scroll',
+                'zoom-in','zoom-out','col-resize','row-resize','nw-resize','n-resize','ne-resize',
+                'e-resize','se-resize','s-resize','sw-resize','w-resize','ns-resize','ew-resize',
+                'nesw-resize','nwse-resize'
+              ]);
+              const NON_INTERACTIVE_CURSORS = new Set(['not-allowed','no-drop','wait','progress','help','context-menu']);
+
+              const styleCache = new WeakMap();
+              const getStyle = (el) => {
+                if (styleCache.has(el)) return styleCache.get(el);
+                const st = window.getComputedStyle(el);
+                styleCache.set(el, st);
+                return st;
+              };
+
+              // ── class heuristic ──
+              const INTERACTIVE_CLASS_RE = /\\b(btn|button|clickable|menu|item|entry|link|tab|nav|dropdown|toggle|selectable|interactive)\\b/i;
+
+              // ── scrollable detection ──
+              const isScrollable = (el) => {
+                const st = getStyle(el);
+                const overflow = (st.overflow + st.overflowY + st.overflowX);
+                if (!/auto|scroll/.test(overflow)) return false;
+                return (el.scrollHeight > el.clientHeight + 4) || (el.scrollWidth > el.clientWidth + 4);
+              };
+
+              // ── inline events fallback ──
+              const hasInlineEvents = (el) => !!(el.onclick || el.onmousedown || el.onmouseup || el.ondblclick || el.onkeydown || el.onkeyup || el.onchange || el.oninput || el.onfocus || el.onblur);
+
+              // ── add element ──
+              const addEl = (el, reason) => {
+                if (seen.has(el) || !isVisible(el)) return;
+                // Only skip the element itself if marked non-interactive (e.g. React root wrappers)
+                if (el.hasAttribute('data-nanobot-not-interactive')) return;
+                if (isDisabled(el)) return;
+
+                // For heuristic reasons, do a lightweight top-element check
+                if (reason !== 'semantic' && !isTopElement(el)) return;
+
+                // Extra sanity for empty cursor-based divs
+                if (reason === 'cursor' || reason === 'class-heuristic') {
+                  const tag = el.tagName.toLowerCase();
+                  if ((tag === 'div' || tag === 'span') && !el.textContent.trim() && !INTERACTIVE_CLASS_RE.test(el.className) && !el.getAttribute('role') && !el.getAttribute('tabindex')) {
+                    if (!hasInlineEvents(el)) return;
+                  }
+                }
+
+                seen.add(el);
                 const idx = descs.length;
                 el.setAttribute('data-nanobot-id', String(idx));
                 const tag  = el.tagName.toLowerCase();
@@ -557,14 +678,85 @@ function startBridgeServer() {
                 } else {
                   d += (role==='button'||tag==='button'?'Button: ':'Elem: ')+(txt||lbl||role);
                 }
+                if (isScrollable(el)) d += ' [scrollable]';
                 descs.push(d);
+              };
+
+              // 1. Semantic selectors
+              const SEL = [
+                'a[href]:not([href=""])',
+                'button:not([disabled])',
+                'input:not([type="hidden"]):not([disabled])',
+                'select:not([disabled])',
+                'textarea:not([disabled])',
+                '[role="button"]:not([disabled])',
+                '[role="link"]','[role="checkbox"]','[role="radio"]',
+                '[role="menuitem"]','[role="tab"]','[role="option"]',
+                '[role="combobox"]','[role="searchbox"]','[role="textbox"]',
+                '[role="listbox"]','[role="slider"]','[role="spinbutton"]',
+                '[role="switch"]','[role="scrollbar"]',
+                '[contenteditable="true"]',
+                'details','summary','label','fieldset','legend',
+                '[aria-haspopup="true"]','[aria-expanded]',
+              ].join(',');
+              document.querySelectorAll(SEL).forEach(el => addEl(el, 'semantic'));
+
+              // 2. Cursor heuristic
+              document.querySelectorAll('body *').forEach(el => {
+                if (seen.has(el)) return;
+                try {
+                  const c = getStyle(el).cursor;
+                  if (INTERACTIVE_CURSORS.has(c) && !NON_INTERACTIVE_CURSORS.has(c)) addEl(el, 'cursor');
+                } catch (e) {}
               });
-              // Also extract main text content
+
+              // 3. Tabindex
+              document.querySelectorAll('[tabindex]:not([tabindex="-1"])').forEach(el => {
+                if (!seen.has(el)) addEl(el, 'tabindex');
+              });
+
+              // 4. Inline events
+              document.querySelectorAll('*[onclick],*[onmousedown],*[onmouseup],*[ondblclick]').forEach(el => {
+                if (!seen.has(el)) addEl(el, 'event');
+              });
+
+              // 5. Class heuristic
+              document.querySelectorAll('body *').forEach(el => {
+                if (seen.has(el)) return;
+                if (INTERACTIVE_CLASS_RE.test(el.className)) addEl(el, 'class-heuristic');
+              });
+
+              // 6. Scrollable containers
+              document.querySelectorAll('body *').forEach(el => {
+                if (seen.has(el)) return;
+                if (isScrollable(el)) addEl(el, 'scrollable');
+              });
+
+              // 7. AntD patch: promote hidden select inputs to visible wrapper
+              document.querySelectorAll('.ant-select input[role="combobox"]').forEach(el => {
+                if (!isVisible(el)) {
+                  const wrapper = el.closest('.ant-select');
+                  if (wrapper && isVisible(wrapper) && !seen.has(wrapper)) addEl(wrapper, 'antd-select');
+                }
+              });
+
+              // Body text
               const clone = document.body.cloneNode(true);
-              clone.querySelectorAll('script,style,noscript,nav,footer,header,[aria-hidden="true"]')
+              clone.querySelectorAll('script,style,noscript,nav,footer,header,[aria-hidden="true"],[data-nanobot-not-interactive]')
                 .forEach(e=>e.remove());
               const bodyText = (clone.innerText||'').replace(/\\n{3,}/g,'\\n\\n').trim().slice(0,3000);
-              return { title: document.title, url: location.href, elementCount: descs.length, elements: descs, bodyText };
+
+              return {
+                title: document.title,
+                url: location.href,
+                viewportWidth: vw,
+                viewportHeight: vh,
+                scrollY: window.scrollY,
+                pageHeight: document.documentElement.scrollHeight,
+                elementCount: descs.length,
+                elements: descs,
+                bodyText
+              };
             })()
           `)
           if (fxEnabled) await wc.executeJavaScript(
@@ -600,8 +792,21 @@ function startBridgeServer() {
               el.scrollIntoView({ block: 'center', inline: 'nearest' });
               const r = el.getBoundingClientRect();
               if (r.width===0 && r.height===0) return null;
-              return { x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2),
-                       tag: el.tagName, text: (el.textContent||'').trim().slice(0,60) };
+
+              // Dispatch full W3C pointer/mouse event sequence for SPA compatibility
+              const x = Math.round(r.left + r.width/2);
+              const y = Math.round(r.top + r.height/2);
+              const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, screenX: x, screenY: y };
+              const optsNoBubble = { bubbles: false, cancelable: false, clientX: x, clientY: y, screenX: x, screenY: y };
+              el.dispatchEvent(new PointerEvent('pointerover', opts));
+              el.dispatchEvent(new MouseEvent('mouseover', opts));
+              el.dispatchEvent(new PointerEvent('pointerenter', optsNoBubble));
+              el.dispatchEvent(new MouseEvent('mouseenter', optsNoBubble));
+              el.dispatchEvent(new PointerEvent('pointerdown', { ...opts, button: 0, buttons: 1 }));
+              el.dispatchEvent(new MouseEvent('mousedown', { ...opts, button: 0, buttons: 1 }));
+              if (el.focus) el.focus();
+
+              return { x, y, tag: el.tagName, text: (el.textContent||'').trim().slice(0,60) };
             })()
           `)
           if (!pos) {
@@ -620,6 +825,23 @@ function startBridgeServer() {
             wc.sendInputEvent({ type: 'mouseMove', x: pos.x, y: pos.y })
             wc.sendInputEvent({ type: 'mouseDown', x: pos.x, y: pos.y, button: 'left', clickCount: 1 })
             wc.sendInputEvent({ type: 'mouseUp',   x: pos.x, y: pos.y, button: 'left', clickCount: 1 })
+            // Also dispatch pointerup/mouseup/click via JS to complete the sequence for frameworks
+            await wc.executeJavaScript(`
+              (function() {
+                const q = ${JSON.stringify(data.selector || '')};
+                let el = null;
+                if (/^@\\d+$/.test(q)) el = document.querySelector('[data-nanobot-id="'+q.slice(1)+'"]');
+                if (!el) { try { el = document.querySelector(q); } catch(e) {} }
+                if (!el) return;
+                const r = el.getBoundingClientRect();
+                const x = Math.round(r.left + r.width/2);
+                const y = Math.round(r.top + r.height/2);
+                const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, screenX: x, screenY: y };
+                el.dispatchEvent(new PointerEvent('pointerup', { ...opts, button: 0, buttons: 0 }));
+                el.dispatchEvent(new MouseEvent('mouseup', { ...opts, button: 0, buttons: 0 }));
+                el.click();
+              })()
+            `).catch(() => {})
             res.end(JSON.stringify({ ok: true, element: `${pos.tag}: ${pos.text}`, x: pos.x, y: pos.y }))
           }
 
@@ -645,17 +867,25 @@ function startBridgeServer() {
                 }
               }
               if (!el) return false;
+              el.scrollIntoView({ block: 'center', inline: 'nearest' });
               el.focus();
+              el.dispatchEvent(new FocusEvent('focus', { bubbles: false }));
               if (el.isContentEditable) {
+                // Synthetic input first, then fallback to execCommand
                 el.innerText = text;
-                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+                // Verify fallback
+                if (el.innerText !== text) {
+                  document.execCommand('selectAll', false, null);
+                  document.execCommand('insertText', false, text);
+                }
               } else {
                 const nativeSetter = Object.getOwnPropertyDescriptor(
-                  el.tagName==='TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+                  Object.getPrototypeOf(el),
                   'value')?.set;
                 if (nativeSetter) { nativeSetter.call(el, text); }
                 else { el.value = text; }
-                el.dispatchEvent(new Event('input',  { bubbles: true }));
+                el.dispatchEvent(new InputEvent('input',  { bubbles: true, inputType: 'insertText', data: text }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
               }
               return true;
@@ -684,7 +914,13 @@ function startBridgeServer() {
           const text = await wc.executeJavaScript(`
             (function(){
               const sel = ${JSON.stringify(data.selector || 'body')};
-              const el = document.querySelector(sel);
+              let el = null;
+              // @N  →  element with data-nanobot-id
+              if (/^@\\d+$/.test(sel)) {
+                el = document.querySelector('[data-nanobot-id="'+sel.slice(1)+'"]');
+              }
+              // CSS selector
+              if (!el) { try { el = document.querySelector(sel); } catch(e) {} }
               return el ? el.innerText : '';
             })()
           `)
@@ -805,17 +1041,17 @@ function startBridgeServer() {
 
         // ── Tab: new ────────────────────────────────────────────────────
         } else if (req.method === 'POST' && req.url === '/new-tab') {
-          mainWindow?.webContents?.send('cmd:newTab', data.url || '')
+          focusedOrMainShell()?.webContents?.send('cmd:newTab', data.url || '')
           res.end(JSON.stringify({ ok: true }))
 
         // ── Tab: close ──────────────────────────────────────────────────
         } else if (req.method === 'POST' && req.url === '/close-tab') {
-          mainWindow?.webContents?.send('cmd:closeTab')
+          focusedOrMainShell()?.webContents?.send('cmd:closeTab')
           res.end(JSON.stringify({ ok: true }))
 
         // ── Tab: switch ─────────────────────────────────────────────────
         } else if (req.method === 'POST' && req.url === '/switch-tab') {
-          mainWindow?.webContents?.send('cmd:switchTab', data.tabId)
+          focusedOrMainShell()?.webContents?.send('cmd:switchTab', data.tabId)
           res.end(JSON.stringify({ ok: true }))
 
         } else {
@@ -846,7 +1082,7 @@ const wsRetryTimers = new Map() // sessionId -> { count, timer }
 function connectWebSocket(sessionId) {
   if (!WebSocket) {
     console.error('[ws:proxy] WebSocket module not available')
-    mainWindow?.webContents?.send('ws:status', { sessionId, status: 'error', error: 'WebSocket module not loaded' })
+    broadcastToAllRenderers('ws:status', { sessionId, status: 'error', error: 'WebSocket module not loaded' })
     return
   }
 
@@ -873,13 +1109,13 @@ function connectWebSocket(sessionId) {
     ws.on('open', () => {
       console.log('[ws:proxy] Connected:', sessionId)
       wsRetryTimers.delete(sessionId) // 重置重试计数
-      mainWindow?.webContents?.send('ws:status', { sessionId, status: 'connected' })
+      broadcastToAllRenderers('ws:status', { sessionId, status: 'connected' })
     })
 
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString())
-        mainWindow?.webContents?.send('ws:message', { sessionId, data: msg })
+        broadcastToAllRenderers('ws:message', { sessionId, data: msg })
       } catch (e) {
         console.error('[ws:proxy] Failed to parse message:', e)
       }
@@ -888,7 +1124,7 @@ function connectWebSocket(sessionId) {
     ws.on('close', (code, reason) => {
       console.log('[ws:proxy] Closed:', sessionId, code, reason.toString())
       wsConnections.delete(sessionId)
-      mainWindow?.webContents?.send('ws:status', { sessionId, status: 'disconnected', code, reason: reason.toString() })
+      broadcastToAllRenderers('ws:status', { sessionId, status: 'disconnected', code, reason: reason.toString() })
 
       // 1006 = 异常断开，自动重连（指数退避，最多 10 次）
       if (code === 1006) {
@@ -914,7 +1150,7 @@ function connectWebSocket(sessionId) {
     })
   } catch (err) {
     console.error('[ws:proxy] Failed to create WebSocket:', err)
-    mainWindow?.webContents?.send('ws:status', { sessionId, status: 'error', error: String(err) })
+    broadcastToAllRenderers('ws:status', { sessionId, status: 'error', error: String(err) })
   }
 }
 
@@ -945,13 +1181,15 @@ function sendWebSocketMessage(sessionId, data) {
 
 function registerIpc() {
   // ── Window controls (frameless mode) ────────────────────────────────────────
-  ipcMain.handle('window:minimize',     () => mainWindow?.minimize())
-  ipcMain.handle('window:maximize',     () => {
-    if (mainWindow?.isMaximized()) mainWindow.unmaximize()
-    else mainWindow?.maximize()
+  ipcMain.handle('window:minimize',     (e) => { BrowserWindow.fromWebContents(e.sender)?.minimize() })
+  ipcMain.handle('window:maximize',     (e) => {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w) return
+    if (w.isMaximized()) w.unmaximize()
+    else w.maximize()
   })
-  ipcMain.handle('window:close',        () => mainWindow?.close())
-  ipcMain.handle('window:isMaximized',  () => mainWindow?.isMaximized() ?? false)
+  ipcMain.handle('window:close',        (e) => { BrowserWindow.fromWebContents(e.sender)?.close() })
+  ipcMain.handle('window:isMaximized',  (e) => BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false)
 
   // Renderer notifies main which webview is active (by webContentsId)
   // Track it per renderer window to avoid detached windows overriding the main window.
@@ -960,6 +1198,39 @@ function registerIpc() {
   // Renderer syncs tab state so bridge /tabs has fresh data
   ipcMain.handle('webview:updateState', (e, state) => {
     tabStateByWindow.set(e.sender.id, { tabs: state.tabs || [], activeId: state.activeId || null })
+  })
+
+  // Find in page (Ctrl+F)
+  ipcMain.handle('webview:findInPage', (_e, text, options) => {
+    const wc = getActiveWc()
+    if (!wc) return { requestId: -1, matches: 0 }
+    const requestId = wc.findInPage(text, options || { forward: true, findNext: false })
+    return { requestId, matches: 0 } // matches will be updated via event
+  })
+  ipcMain.handle('webview:stopFindInPage', (_e, action) => {
+    const wc = getActiveWc()
+    if (!wc) return
+    wc.stopFindInPage(action || 'clearSelection')
+  })
+  // Listen for found-in-page events from all webviews and forward to renderer
+  app.on('web-contents-created', (_event, contents) => {
+    if (contents.getType() === 'webview') {
+      contents.on('found-in-page', (event, result) => {
+        // Forward to all windows (simplified) or track which window owns this webview
+        BrowserWindow.getAllWindows().forEach(win => {
+          win.webContents.send('webview:foundInPage', result)
+        })
+      })
+      // Ctrl/Cmd+F is consumed by the webview guest; forward find UI to the host window.
+      contents.on('before-input-event', (event, input) => {
+        if ((input.control || input.meta) && input.key.toLowerCase() === 'f') {
+          event.preventDefault()
+          const hostWin = BrowserWindow.fromWebContents(contents)
+            || (contents.hostWebContents && BrowserWindow.fromWebContents(contents.hostWebContents))
+          if (hostWin && !hostWin.isDestroyed()) hostWin.webContents.send('shortcut:find')
+        }
+      })
+    }
   })
 
   // Ad blocking toggle
@@ -1031,7 +1302,8 @@ function registerIpc() {
   })
 
   // Right-click context menu for webview content
-  ipcMain.handle('context-menu:show', (_e, p) => {
+  ipcMain.handle('context-menu:show', (e, p) => {
+    const shell = BrowserWindow.fromWebContents(e.sender)
     const wc = getActiveWc()
     const template = []
 
@@ -1048,7 +1320,7 @@ function registerIpc() {
     // Link actions
     if (p.linkURL) {
       template.push(
-        { label: '在新标签页中打开链接', click: () => mainWindow?.webContents?.send('cmd:newTab', p.linkURL) },
+        { label: '在新标签页中打开链接', click: () => shell?.webContents?.send('cmd:newTab', p.linkURL) },
         { label: '在当前标签页中打开',   click: () => wc?.loadURL(p.linkURL)  },
         { label: '复制链接地址',          click: () => clipboard.writeText(p.linkURL) },
         { type: 'separator' },
@@ -1058,7 +1330,7 @@ function registerIpc() {
     // Image actions
     if (p.srcURL && p.mediaType === 'image') {
       template.push(
-        { label: '在新标签页中打开图片', click: () => mainWindow?.webContents?.send('cmd:newTab', p.srcURL) },
+        { label: '在新标签页中打开图片', click: () => shell?.webContents?.send('cmd:newTab', p.srcURL) },
         { label: '复制图片地址',          click: () => clipboard.writeText(p.srcURL) },
         { type: 'separator' },
       )
@@ -1070,7 +1342,7 @@ function registerIpc() {
       template.push(
         { label: '复制',                    role: 'copy' },
         { label: `搜索 "${q}${q.length < p.selectionText.trim().length ? '…' : ''}"`,
-          click: () => mainWindow?.webContents?.send('cmd:newTab',
+          click: () => shell?.webContents?.send('cmd:newTab',
             `https://www.google.com/search?q=${encodeURIComponent(p.selectionText.trim())}`) },
         { type: 'separator' },
       )
@@ -1082,7 +1354,7 @@ function registerIpc() {
         { label: '全选',       role: 'selectAll' },
         { label: '复制页面地址', click: () => wc && clipboard.writeText(wc.getURL()) },
         { type: 'separator' },
-        { label: '查看页面源码', click: () => wc && mainWindow?.webContents?.send('cmd:newTab', `view-source:${wc.getURL()}`) },
+        { label: '查看页面源码', click: () => wc && shell?.webContents?.send('cmd:newTab', `view-source:${wc.getURL()}`) },
         { label: '检查元素',   click: () => wc?.openDevTools() },
       )
     } else {
@@ -1090,23 +1362,23 @@ function registerIpc() {
       template.push(
         { label: '全选', role: 'selectAll' },
         { type: 'separator' },
-        { label: '检查元素', click: () => mainWindow?.webContents?.openDevTools() },
+        { label: '检查元素', click: () => shell?.webContents?.openDevTools() },
       )
     }
 
-    Menu.buildFromTemplate(template).popup({ window: mainWindow })
+    if (shell) Menu.buildFromTemplate(template).popup({ window: shell })
   })
 
   // Detach tab → open as new Electron window
   ipcMain.handle('tab:detach', (_e, url, sx, sy, theme) => {
-    const t = theme || 'dark'
-    const bgColor = t === 'light' ? '#f2f4f7' : '#111827'
     const win = new BrowserWindow({
       width: 1300, height: 860, minWidth: 900, minHeight: 600,
       x: Math.max(0, (sx || 100) - 30), y: Math.max(0, (sy || 100) - 15),
       title: 'UrchinAI',
-      titleBarStyle: 'hiddenInset',
-      backgroundColor: bgColor,
+      titleBarStyle: 'hidden',
+      frame: false,
+      transparent: true,
+      borderRadius: 12,
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
@@ -1116,13 +1388,17 @@ function registerIpc() {
         ...(isDev ? {} : { webSecurity: false }),
       },
     })
+    attachRendererShortcuts(win)
     const encoded = encodeURIComponent(url || '')
-    const query   = `initialUrl=${encoded}&theme=${t}`
+    const query   = `initialUrl=${encoded}&theme=${theme || 'dark'}`
     if (RENDERER_URL) {
       win.loadURL(`${RENDERER_URL}?${query}`)
     } else {
-      win.loadURL(`app://./dist/index.html?initialUrl=${encodeURIComponent(url || '')}&theme=${t}`)
+      win.loadURL(`app://./dist/index.html?${query}`)
     }
+    win.webContents.once('did-finish-load', () => {
+      if (backendHealthReady) win.webContents.send('backend:ready')
+    })
     return true
   })
 
@@ -1143,14 +1419,14 @@ function registerIpc() {
   })
   ipcMain.handle('session:getAll',    ()       => loadSessions())
   ipcMain.handle('session:delete',    (_e, id) => { saveSessions(loadSessions().filter(s => s.id !== id)); return { ok: true } })
-  ipcMain.handle('session:restore',   (_e, id) => {
+  ipcMain.handle('session:restore',   (e, id) => {
     const sess = loadSessions().find(s => s.id === id)
     if (!sess) return { ok: false }
-    mainWindow?.webContents?.send('cmd:restoreSession', sess.tabs)
+    BrowserWindow.fromWebContents(e.sender)?.webContents?.send('cmd:restoreSession', sess.tabs)
     return { ok: true, count: sess.tabs.length }
   })
-  ipcMain.handle('session:new', () => {
-    mainWindow?.webContents?.send('cmd:newSession')
+  ipcMain.handle('session:new', (e) => {
+    BrowserWindow.fromWebContents(e.sender)?.webContents?.send('cmd:newSession')
     return { ok: true }
   })
 
@@ -1264,11 +1540,16 @@ function registerIpc() {
   let domPickerMode = false
   const DOM_PICKER_SCRIPT = `
     (function() {
-      if (window.__domPicker) return;
+      // 如果已存在 picker 实例，直接启动
+      if (window.__domPicker) {
+        window.__domPicker.start();
+        return;
+      }
 
       const picker = {
         overlay: null,
-        selectedElement: null,
+        hoveredElement: null,
+        pickedElements: [], // 存储所有选中的元素
 
         createOverlay() {
           const div = document.createElement('div');
@@ -1281,48 +1562,137 @@ function registerIpc() {
         },
 
         highlightElement(el) {
-          if (this.selectedElement) {
-            this.selectedElement.style.outline = '';
-            this.selectedElement.style.backgroundColor = '';
+          // 清除之前的高亮
+          if (this.hoveredElement && !this.pickedElements.includes(this.hoveredElement)) {
+            this.hoveredElement.style.outline = '';
+            this.hoveredElement.style.backgroundColor = '';
           }
-          if (el && el !== document.body) {
-            this.selectedElement = el;
-            el.style.outline = '3px solid #63b3ed';
-            el.style.backgroundColor = 'rgba(99,179,237,0.15)';
+          if (el && el !== document.body && !this.pickedElements.includes(el)) {
+            this.hoveredElement = el;
+            el.style.outline = '2px solid #63b3ed';
+            el.style.backgroundColor = 'rgba(99,179,237,0.1)';
           }
+        },
+
+        addBadgeToElement(el, badgeNumber) {
+          // 创建 badge
+          const badge = document.createElement('div');
+          badge.id = '__dom-picked-badge-' + badgeNumber;
+          badge.textContent = '#' + badgeNumber;
+          badge.style.cssText =
+            'position:fixed;' +
+            'background: linear-gradient(135deg, #63b3ed, #4299e1);' +
+            'color: white;' +
+            'font-size: 11px;' +
+            'font-weight: bold;' +
+            'padding: 2px 8px;' +
+            'border-radius: 12px;' +
+            'box-shadow: 0 2px 8px rgba(99,179,237,0.5);' +
+            'z-index: 2147483647;' +
+            'pointer-events: none;' +
+            'font-family: monospace;';
+
+          // 计算位置
+          const rect = el.getBoundingClientRect();
+          badge.style.left = (rect.right - 20) + 'px';
+          badge.style.top = (rect.top - 8) + 'px';
+
+          document.body.appendChild(badge);
+          this.pickedElements.push(el);
+
+          // 给元素添加持久的蓝色边框
+          el.style.outline = '2px solid #63b3ed';
+          el.style.backgroundColor = 'rgba(99,179,237,0.08)';
+          el.style.position = 'relative';
+        },
+
+        removeBadge() {
+          // 清除所有 badge（用于重新选取时）
+          this.pickedElements.forEach((el, idx) => {
+            const badge = document.getElementById('__dom-picked-badge-' + (idx + 1));
+            if (badge) badge.remove();
+            el.style.outline = '';
+            el.style.backgroundColor = '';
+          });
+          this.pickedElements = [];
+        },
+
+        removeBadgeByNumber(badgeNumber) {
+          // 移除指定编号的 badge
+          const index = badgeNumber - 1;
+          if (index < 0 || index >= this.pickedElements.length) return;
+
+          const el = this.pickedElements[index];
+          const badge = document.getElementById('__dom-picked-badge-' + badgeNumber);
+          if (badge) badge.remove();
+
+          // 移除元素的样式
+          el.style.outline = '';
+          el.style.backgroundColor = '';
+
+          // 从数组中移除
+          this.pickedElements.splice(index, 1);
+
+          // 重新编号剩余的 badges
+          this.pickedElements.forEach((el, idx) => {
+            const oldBadge = document.getElementById('__dom-picked-badge-' + (idx + 2));
+            if (oldBadge) {
+              oldBadge.id = '__dom-picked-badge-' + (idx + 1);
+              oldBadge.textContent = '#' + (idx + 1);
+            }
+          });
         },
 
         getSelector(el) {
           if (!el || el === document.body) return 'body';
 
+          // 优先尝试简单的唯一选择器
+          // 1. 如果有 ID，直接使用（最稳定）
+          if (el.id) {
+            return '#' + el.id;
+          }
+
+          // 2. 尝试 tag + class 组合
+          const tagName = el.tagName.toLowerCase();
+          if (el.className) {
+            const classes = el.className.toString().split(/\\s+/).filter(c => c && !c.startsWith('__dom') && !c.startsWith('data-nanobot'));
+            // 使用第一个有意义的 class
+            const meaningfulClass = classes.find(c => c.length > 2);
+            if (meaningfulClass) {
+              const selector = tagName + '.' + meaningfulClass;
+              // 检查是否唯一
+              if (document.querySelectorAll(selector).length === 1) {
+                return selector;
+              }
+            }
+          }
+
+          // 3. 生成简化路径选择器（不使用 :nth-of-type，避免不稳定）
           const path = [];
           let current = el;
+          let depth = 0;
+          const maxDepth = 3; // 限制深度，避免过长选择器
 
-          while (current && current !== document.body) {
+          while (current && current !== document.body && depth < maxDepth) {
             let selector = current.tagName.toLowerCase();
 
             if (current.id) {
-              selector += '#' + current.id;
+              selector = '#' + current.id;
               path.unshift(selector);
               break;
             }
 
+            // 只使用第一个有意义的 class
             if (current.className) {
-              const classes = current.className.toString().split(/\\s+/).filter(c => c && !c.startsWith('__dom')).slice(0, 2);
-              if (classes.length) selector += '.' + classes.join('.');
-            }
-
-            const parent = current.parentElement;
-            if (parent) {
-              const siblings = Array.from(parent.children).filter(s => s.tagName === current.tagName);
-              if (siblings.length > 1) {
-                const index = siblings.indexOf(current) + 1;
-                selector += ':nth-of-type(' + index + ')';
+              const classes = current.className.toString().split(/\\s+/).filter(c => c && !c.startsWith('__dom') && !c.startsWith('data-nanobot') && c.length > 2);
+              if (classes.length > 0) {
+                selector += '.' + classes[0];
               }
             }
 
             path.unshift(selector);
             current = current.parentElement;
+            depth++;
           }
 
           return path.join(' > ');
@@ -1331,13 +1701,22 @@ function registerIpc() {
         getElementInfo(el) {
           if (!el) return null;
           const rect = el.getBoundingClientRect();
+
+          // 分配唯一的 data-nanobot-id（使用时间戳+随机数确保唯一）
+          let nanobotId = el.getAttribute('data-nanobot-id');
+          if (!nanobotId) {
+            nanobotId = String(Math.floor(Math.random() * 1000000));
+            el.setAttribute('data-nanobot-id', nanobotId);
+          }
+
           return {
             tagName: el.tagName.toLowerCase(),
             id: el.id || null,
             className: el.className || null,
-            selector: this.getSelector(el),
-            text: (el.textContent || '').trim().slice(0, 200),
-            html: el.outerHTML.slice(0, 500),
+            selector: '@' + nanobotId,  // 使用 @N 格式，与后端兼容
+            nanobotId: nanobotId,
+            text: (el.textContent || '').trim().slice(0, 100),
+            html: el.outerHTML.slice(0, 300),
             attributes: Array.from(el.attributes).reduce((acc, attr) => {
               if (!attr.name.startsWith('__dom')) acc[attr.name] = attr.value;
               return acc;
@@ -1364,30 +1743,37 @@ function registerIpc() {
 
           const info = this.getElementInfo(e.target);
 
-          // Restore styles
-          if (this.selectedElement) {
-            this.selectedElement.style.outline = '';
-            this.selectedElement.style.backgroundColor = '';
-          }
+          // 添加 badge 到选中的元素（角标编号为当前已选数量 + 1）
+          const badgeNumber = this.pickedElements.length + 1;
+          this.addBadgeToElement(e.target, badgeNumber);
 
           // Send result via custom event that Electron can capture
           window.__domPickerResult = info;
           window.postMessage({ type: '__DOM_PICKER_RESULT', data: info }, '*');
 
+          // 自动停止选取模式（一次性），但不销毁实例以保留已选元素状态
+          setTimeout(() => {
+            this.stop();
+          }, 100);
+
           return false;
         },
 
         start() {
+          // 如果已经存在 picker 实例，只重新创建 overlay 和事件监听
+          // 保留已选中的元素和 badges
           this.overlay = this.createOverlay();
           document.body.style.cursor = 'crosshair';
 
           this._mouseover = this.handleMouseOver.bind(this);
           this._click = this.handleClick.bind(this);
+          this._mousedown = (e) => { e.stopPropagation(); e.preventDefault(); };
+          this._mouseup = (e) => { e.stopPropagation(); e.preventDefault(); };
 
           document.addEventListener('mouseover', this._mouseover, true);
           document.addEventListener('click', this._click, true);
-          document.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); }, true);
-          document.addEventListener('mouseup', (e) => { e.stopPropagation(); e.preventDefault(); }, true);
+          document.addEventListener('mousedown', this._mousedown, true);
+          document.addEventListener('mouseup', this._mouseup, true);
         },
 
         stop() {
@@ -1397,13 +1783,16 @@ function registerIpc() {
           }
           document.body.style.cursor = '';
 
-          if (this.selectedElement) {
-            this.selectedElement.style.outline = '';
-            this.selectedElement.style.backgroundColor = '';
+          // 清除悬停高亮（只要不是已选中的元素）
+          if (this.hoveredElement && !this.pickedElements.includes(this.hoveredElement)) {
+            this.hoveredElement.style.outline = '';
+            this.hoveredElement.style.backgroundColor = '';
           }
 
           document.removeEventListener('mouseover', this._mouseover, true);
           document.removeEventListener('click', this._click, true);
+          document.removeEventListener('mousedown', this._mousedown, true);
+          document.removeEventListener('mouseup', this._mouseup, true);
         }
       };
 
@@ -1412,35 +1801,33 @@ function registerIpc() {
     })()
   `
 
-  // Store picker result listener
-  let domPickerListener = null
+  // Store picker result listeners (module level to prevent GC)
+  let domPickerConsoleListener = null
+  let domPickerTargetWc = null
 
   ipcMain.handle('domPicker:start', async () => {
     const wc = getActiveWc()
     if (!wc) return { ok: false, error: 'no active webview' }
 
-    domPickerMode = true
-
-    // Inject picker script
-    await wc.executeJavaScript(DOM_PICKER_SCRIPT).catch(err => {
-      console.error('[domPicker] Inject failed:', err)
-      return { ok: false, error: String(err) }
-    })
-
-    // Set up message listener for picker result
-    if (domPickerListener) {
-      wc.removeListener('ipc-message', domPickerListener)
+    // Clean up previous listeners
+    if (domPickerConsoleListener && domPickerTargetWc) {
+      domPickerTargetWc.removeListener('console-message', domPickerConsoleListener)
     }
 
-    domPickerListener = (e, channel, data) => {
-      if (channel === '__DOM_PICKER_RESULT') {
-        domPickerMode = false
-        mainWindow?.webContents?.send('domPicker:picked', data)
-      }
+    domPickerMode = true
+    domPickerTargetWc = wc
+
+    // Inject picker script
+    try {
+      await wc.executeJavaScript(DOM_PICKER_SCRIPT)
+    } catch (err) {
+      console.error('[domPicker] Inject failed:', err)
+      domPickerMode = false
+      return { ok: false, error: String(err) }
     }
 
     // Listen for console messages (picker uses postMessage which appears as console in webview)
-    const consoleListener = (e, level, message, line, sourceId) => {
+    domPickerConsoleListener = (e, level, message, line, sourceId) => {
       if (!domPickerMode) return
       try {
         const msg = message.toString()
@@ -1449,14 +1836,14 @@ function registerIpc() {
           if (match) {
             const data = JSON.parse(match[1])
             domPickerMode = false
-            wc.removeListener('console-message', consoleListener)
-            mainWindow?.webContents?.send('domPicker:picked', data)
+            wc.removeListener('console-message', domPickerConsoleListener)
+            browserWindowForPageContents(wc)?.webContents?.send('domPicker:picked', data)
           }
         }
       } catch (_) {}
     }
 
-    wc.on('console-message', consoleListener)
+    wc.on('console-message', domPickerConsoleListener)
 
     // Also inject a listener for postMessage
     await wc.executeJavaScript(`
@@ -1476,19 +1863,59 @@ function registerIpc() {
 
   ipcMain.handle('domPicker:stop', async () => {
     const wc = getActiveWc()
-    if (!wc) return { ok: false, error: 'no active webview' }
 
     domPickerMode = false
+
+    // Clean up console listener
+    if (domPickerConsoleListener && domPickerTargetWc) {
+      domPickerTargetWc.removeListener('console-message', domPickerConsoleListener)
+      domPickerConsoleListener = null
+    }
+    domPickerTargetWc = null
+
+    if (wc) {
+      await wc.executeJavaScript(`
+        (function() {
+          if (window.__domPicker) {
+            window.__domPicker.stop();
+            window.__domPicker = null;
+          }
+          if (window.__domPickerMessageListener) {
+            window.removeEventListener('message', window.__domPickerMessageListener);
+            window.__domPickerMessageListener = null;
+          }
+        })()
+      `).catch(() => {})
+    }
+
+    return { ok: true }
+  })
+
+  // 移除特定 badge
+  ipcMain.handle('domPicker:removeBadge', async (_e, badgeNumber) => {
+    const wc = getActiveWc()
+    if (!wc) return { ok: false, error: 'no active webview' }
 
     await wc.executeJavaScript(`
       (function() {
         if (window.__domPicker) {
-          window.__domPicker.stop();
-          window.__domPicker = null;
+          window.__domPicker.removeBadgeByNumber(${badgeNumber});
         }
-        if (window.__domPickerMessageListener) {
-          window.removeEventListener('message', window.__domPickerMessageListener);
-          window.__domPickerMessageListener = null;
+      })()
+    `).catch(() => {})
+
+    return { ok: true }
+  })
+
+  // 清除所有 badges
+  ipcMain.handle('domPicker:clearAllBadges', async () => {
+    const wc = getActiveWc()
+    if (!wc) return { ok: false, error: 'no active webview' }
+
+    await wc.executeJavaScript(`
+      (function() {
+        if (window.__domPicker) {
+          window.__domPicker.removeBadge();
         }
       })()
     `).catch(() => {})
@@ -1499,13 +1926,33 @@ function registerIpc() {
 
 // ─── Window ───────────────────────────────────────────────────────────────────
 
+/** Ctrl/Cmd+F and DevTools shortcuts on the shell (renderer) webContents. */
+function attachRendererShortcuts(win) {
+  win.webContents.on('before-input-event', (event, input) => {
+    if ((input.control || input.meta) && input.key.toLowerCase() === 'f') {
+      event.preventDefault()
+      win.webContents.send('shortcut:find')
+    }
+    if (!isDev && input.control && input.shift && input.key.toLowerCase() === 'i') {
+      win.webContents.toggleDevTools()
+    }
+  })
+  if (isDev) {
+    win.webContents.on('before-input-event', (_, input) => {
+      if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+        win.webContents.toggleDevTools()
+      }
+    })
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 900, minHeight: 600,
     title: 'UrchinAI',
     titleBarStyle: 'hidden',
     frame: false,
-    backgroundColor: '#111827',
+    transparent: true,
     borderRadius: 12,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1526,14 +1973,7 @@ function createWindow() {
 
   mainWindow.on('closed', () => { mainWindow = null })
 
-  // Ctrl+Shift+I to open DevTools in production (for debugging API/WS issues)
-  if (!isDev) {
-    mainWindow.webContents.on('before-input-event', (_, input) => {
-      if (input.control && input.shift && input.key.toLowerCase() === 'i') {
-        mainWindow.webContents.toggleDevTools()
-      }
-    })
-  }
+  attachRendererShortcuts(mainWindow)
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
@@ -1570,10 +2010,21 @@ if (process.platform === 'linux') {
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() === 'webview') {
     contents.setWindowOpenHandler(({ url }) => {
-      // Forward to renderer so it can create a new tab
-      mainWindow?.webContents?.send('cmd:newTab', url)
+      const win = browserWindowForPageContents(contents) || mainWindow
+      win?.webContents?.send('cmd:newTab', url)
       return { action: 'deny' }
     })
+
+    // Auto-cleanup nanobot highlight labels on navigation (page-agent pattern)
+    const cleanup = () => {
+      contents.executeJavaScript(`
+        document.querySelectorAll('[data-nanobot-id]').forEach(el => el.removeAttribute('data-nanobot-id'));
+        if (window.__nbFX && window.__nbFX.clearHL) window.__nbFX.clearHL();
+        if (window.__nbFX && window.__nbFX.clearLabels) window.__nbFX.clearLabels();
+      `).catch(() => {})
+    }
+    contents.on('did-navigate', cleanup)
+    contents.on('did-navigate-in-page', cleanup)
   }
 })
 
@@ -1594,8 +2045,6 @@ function waitForBackend(maxWaitMs = 30000) {
     poll()
   })
 }
-
-const NANOBOT_PARTITION = 'persist:urchin'
 
 app.whenReady().then(async () => {
   // Register app:// protocol for packaged mode (serves dist/ from app root)
@@ -1650,7 +2099,10 @@ app.whenReady().then(async () => {
   let backendReady = false
   let pageLoaded = false
   const maybeSendBackendReady = () => {
-    if (backendReady && pageLoaded) mainWindow?.webContents?.send('backend:ready')
+    if (!backendReady || !pageLoaded) return
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('backend:ready')
+    }
   }
   mainWindow?.webContents?.on('did-finish-load', () => {
     pageLoaded = true
@@ -1658,6 +2110,7 @@ app.whenReady().then(async () => {
   })
   const ok = await waitForBackend()
   backendReady = true
+  backendHealthReady = true
   console.log(`[main] backend ready: ${ok}`)
   maybeSendBackendReady()
 })

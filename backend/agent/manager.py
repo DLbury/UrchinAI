@@ -1,73 +1,18 @@
 """
-AgentManager: streaming agent loop built on nanobot's native providers.
+AgentManager: streaming agent loop built directly on LiteLLM.
 
 Each chat session gets its own AgentManager instance tied to a BrowserSession.
-Uses AnthropicProvider / OpenAICompatProvider directly (no LiteLLM dependency).
+We bypass nanobot's non-streaming process_direct and implement our own loop so
+the frontend receives tokens in real time.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, AsyncGenerator
-
-from nanobot.config.loader import load_config
-from nanobot.providers import AnthropicProvider, OpenAICompatProvider, AzureOpenAIProvider
-from nanobot.providers.base import LLMProvider
-
-
-def _migrate_config(data: dict) -> dict:
-    """Migrate legacy config formats to current nanobot schema.
-
-    Handles:
-    - Old field names: apiKey -> api_key, apiBase -> api_base
-    - Old provider names: "ali" -> "dashscope", "zhipu" -> "zhipuai"
-    - Old tools.exec.restrictToWorkspace -> tools.restrictToWorkspace
-    """
-    if not data:
-        return data
-
-    # ── Legacy tools migration ─────────────────────────────────────────────
-    tools = data.get("tools", {})
-    exec_cfg = tools.get("exec", {})
-    if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
-        tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
-
-    # ── Legacy provider migration ─────────────────────────────────────────────
-    LEGACY_PROVIDER_MAP = {
-        "ali": "dashscope",
-        "zhipu": "zhipuai",
-    }
-
-    providers = data.get("providers", {})
-    agents_defaults = data.get("agents", {}).get("defaults", {})
-
-    # Migrate provider configs: apiKey -> api_key, apiBase -> api_base
-    migrated_providers = {}
-    for name, cfg in providers.items():
-        if not isinstance(cfg, dict):
-            continue
-        new_name = LEGACY_PROVIDER_MAP.get(name, name)
-        migrated = {
-            "api_key": cfg.get("apiKey") or cfg.get("api_key", ""),
-            "api_base": cfg.get("apiBase") or cfg.get("api_base"),
-        }
-        if cfg.get("extraHeaders"):
-            migrated["extra_headers"] = cfg["extraHeaders"]
-        # Remove empty values
-        migrated = {k: v for k, v in migrated.items() if v}
-        migrated_providers[new_name] = migrated
-
-    # Update providers dict with migrated entries
-    data["providers"] = migrated_providers
-
-    # Migrate provider name in agent defaults
-    prov = agents_defaults.get("provider", "")
-    if prov in LEGACY_PROVIDER_MAP:
-        agents_defaults["provider"] = LEGACY_PROVIDER_MAP[prov]
-
-    return data
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +37,16 @@ _SYSTEM_PROMPT_BASE = """\
   - 不会误点到错误元素（如先点提交再填内容的顺序错误）
   - 每次 browser_get_dom 后编号刷新，页面变化后需重新获取
 
+◆ 滚动与页面结构：
+  - browser_get_dom 返回的上下文会告诉你当前在页面顶部/底部，以及上下还有多少内容
+  - 如果目标元素未在当前列表中，使用 browser_scroll("down", 800) 向下滚动，然后重新 browser_get_dom
+  - 滚动后必须重新获取 DOM，因为元素编号会变化
+
+◆ 输入与点击的精确性：
+  - 优先使用 @N 编号操作元素
+  - 在输入前确保焦点元素正确，输入完成后用 browser_press_key("Enter") 提交
+  - 对于自定义组件（如 Ant Design Select），优先点击可见的包装元素
+
 ◆ 其他规则：
   - 不确定页面状态时：先 browser_get_dom 了解结构，必要时 browser_screenshot 查看视觉效果
   - 读取页面内容：browser_get_dom 已包含正文，也可用 browser_get_page_content 获取更完整文本
@@ -102,34 +57,16 @@ NANOBOT_MEMORY = Path.home() / ".nanobot" / "memory.json"
 
 
 def _build_system_prompt() -> str:
-    """Build system prompt, appending memory and skills."""
-    parts = [_SYSTEM_PROMPT_BASE]
-
-    # Load memory entries
+    """Build system prompt, appending any saved memory entries."""
     try:
         if NANOBOT_MEMORY.exists():
             entries = json.loads(NANOBOT_MEMORY.read_text(encoding="utf-8"))
             if entries:
                 notes = "\n".join(f"- {e.get('content', '')}" for e in entries if e.get("content"))
-                parts.append(f"【用户记忆事项（请在回答时参考）】\n{notes}")
+                return _SYSTEM_PROMPT_BASE + f"\n\n【用户记忆事项（请在回答时参考）】\n{notes}"
     except Exception:
         pass
-
-    # Load skills summary
-    try:
-        from nanobot.agent.skills import SkillsLoader
-        loader = SkillsLoader(NANOBOT_WORKSPACE)
-        summary = loader.build_skills_summary()
-        if summary:
-            parts.append(f"""【可用技能】
-
-以下技能可帮助你完成特定任务：
-
-{summary}""")
-    except Exception as e:
-        logger.debug("Failed to load skills: %s", e)
-
-    return "\n\n".join(parts)
+    return _SYSTEM_PROMPT_BASE
 
 # OpenAI function-call schema for each browser tool
 _BROWSER_TOOL_SCHEMAS: list[dict] = [
@@ -333,344 +270,92 @@ _BROWSER_TOOL_SCHEMAS: list[dict] = [
     },
 ]
 
-_READ_FILE_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "read_file",
-        "description": "Read the contents of a file. Returns numbered lines. Use offset and limit to paginate through large files.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "The file path to read"},
-                "offset": {"type": "integer", "description": "Line number to start reading from (1-indexed, default 1)", "minimum": 1},
-                "limit": {"type": "integer", "description": "Maximum number of lines to read (default 2000)", "minimum": 1},
-            },
-            "required": ["path"],
-        },
-    },
-}
 
-_WRITE_FILE_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "write_file",
-        "description": "Write content to a file at the given path. Creates parent directories if needed.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "The file path to write to"},
-                "content": {"type": "string", "description": "The content to write"},
-            },
-            "required": ["path", "content"],
-        },
-    },
-}
-
-_EDIT_FILE_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "edit_file",
-        "description": "Edit a file by replacing old_text with new_text. Supports minor whitespace/line-ending differences. Set replace_all=true to replace every occurrence.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "The file path to edit"},
-                "old_text": {"type": "string", "description": "The text to find and replace"},
-                "new_text": {"type": "string", "description": "The text to replace with"},
-                "replace_all": {"type": "boolean", "description": "Replace all occurrences (default false)"},
-            },
-            "required": ["path", "old_text", "new_text"],
-        },
-    },
-}
-
-_LIST_DIR_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "list_dir",
-        "description": "List the contents of a directory. Set recursive=true to explore nested structure.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "The directory path to list"},
-                "recursive": {"type": "boolean", "description": "Recursively list all files (default false)"},
-                "max_entries": {"type": "integer", "description": "Maximum entries to return (default 200)", "minimum": 1},
-            },
-            "required": ["path"],
-        },
-    },
-}
-
-_EXEC_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "exec",
-        "description": "Execute a shell command and return its output. Use with caution.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "The shell command to execute"},
-                "working_dir": {"type": "string", "description": "Optional working directory for the command"},
-                "timeout": {"type": "integer", "description": "Timeout in seconds (default 60, max 600)"},
-            },
-            "required": ["command"],
-        },
-    },
-}
-
-_GET_ALL_TABS_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_all_tabs",
-        "description": "Get content from all open browser tabs. Returns titles, URLs, and content summaries of all tabs for cross-tab analysis.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-}
+def _load_config() -> dict:
+    if NANOBOT_CONFIG.exists():
+        with open(NANOBOT_CONFIG) as f:
+            return json.load(f)
+    return {}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Browser tool adapter — wraps BrowserTools methods as nanobot Tool instances
-# ─────────────────────────────────────────────────────────────────────────────
-
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-
-
-class BrowserToolAdapter(Tool):
-    """Adapter that exposes a BrowserTools method as a nanobot Tool."""
-
-    def __init__(self, name: str, description: str, parameters: dict, fn):
-        self._name = name
-        self._description = description
-        self._parameters = parameters
-        self._fn = fn
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def description(self) -> str:
-        return self._description
-
-    @property
-    def parameters(self) -> dict:
-        return self._parameters
-
-    async def execute(self, **kwargs: Any) -> Any:
-        return await self._fn(**kwargs)
+def _normalize_litellm_api_base(raw: str | None) -> str | None:
+    """Strip whitespace and trailing slashes so LiteLLM builds a consistent /v1/chat/completions URL."""
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    return s.rstrip("/")
 
 
-# Lazy browser tools instance (created once per streaming session)
-_browser_tools_instance: "BrowserTools | None" = None
-
-
-def _get_browser_tools():
-    """Get or create the BrowserTools singleton."""
-    global _browser_tools_instance
-    if _browser_tools_instance is None:
-        # Import locally to avoid cross-package import issues when running as script
-        import sys
-        from pathlib import Path
-        # Ensure backend/agent is importable
-        agent_dir = Path(__file__).parent
-        backend_dir = agent_dir.parent
-        if str(backend_dir) not in sys.path:
-            sys.path.insert(0, str(backend_dir))
-        from agent.browser_tool import BrowserTools
-        _browser_tools_instance = BrowserTools()
-    return _browser_tools_instance
-
-
-def _build_browser_tool_registry() -> tuple[ToolRegistry, list[dict]]:
-    """Build a ToolRegistry with all browser tools + filesystem tools registered."""
-    registry = ToolRegistry()
-    browser = _get_browser_tools()
-
-    # Map schema name → method name
-    _TOOL_METHODS = [
-        ("browser_navigate", "browser_navigate"),
-        ("browser_click", "browser_click"),
-        ("browser_type", "browser_type"),
-        ("browser_get_text", "browser_get_text"),
-        ("browser_get_url", "browser_get_url"),
-        ("browser_scroll", "browser_scroll"),
-        ("browser_evaluate", "browser_evaluate"),
-        ("browser_new_tab", "browser_new_tab"),
-        ("browser_close_tab", "browser_close_tab"),
-        ("browser_list_tabs", "browser_list_tabs"),
-        ("browser_switch_tab", "browser_switch_tab"),
-        ("browser_get_dom", "browser_get_dom"),
-        ("browser_press_key", "browser_press_key"),
-        ("browser_screenshot", "browser_screenshot"),
-        ("browser_get_page_content", "browser_get_page_content"),
-    ]
-
-    # Build name → schema map
-    schema_map = {s["function"]["name"]: s["function"] for s in _BROWSER_TOOL_SCHEMAS}
-
-    for tool_name, method_name in _TOOL_METHODS:
-        schema = schema_map.get(tool_name)
-        if schema and hasattr(browser, method_name):
-            adapter = BrowserToolAdapter(
-                name=schema["name"],
-                description=schema.get("description", ""),
-                parameters=schema.get("parameters", {}),
-                fn=getattr(browser, method_name),
-            )
-            registry.register(adapter)
-
-    # Register filesystem tools (read/write/edit/list for workspace files)
-    try:
-        from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-        for tool_cls in [ReadFileTool, WriteFileTool, EditFileTool, ListDirTool]:
-            try:
-                registry.register(tool_cls(workspace=NANOBOT_WORKSPACE, allowed_dir=NANOBOT_WORKSPACE))
-            except Exception:
-                registry.register(tool_cls())
-    except Exception as e:
-        logger.warning("Failed to register filesystem tools: %s", e)
-
-    # Register shell execution tool
-    try:
-        from nanobot.agent.tools.shell import ExecTool
-        exec_tool = ExecTool(
-            working_dir=str(NANOBOT_WORKSPACE),
-            restrict_to_workspace=False,
+def _format_llm_error(exc: BaseException, api_base: str | None) -> str:
+    """User-facing hint when LiteLLM/OpenAI-compat calls fail (common: wrong apiBase → 404)."""
+    msg = str(exc)
+    base = api_base or "（未设置，由模型/默认网关决定）"
+    low = msg.lower()
+    if "404" in msg or "not found" in low:
+        return (
+            "模型 API 返回 404：当前地址上找不到 OpenAI 兼容接口。\n"
+            f"已配置的 API Base：{base}\n"
+            "LiteLLM 会请求「API Base + /v1/chat/completions」。\n"
+            "请在本机浏览器或 curl 确认该地址能访问；常见正确示例：\n"
+            "· Ollama：http://<IP>:11434（一般无需再写 /v1）\n"
+            "· LM Studio：http://<IP>:1234/v1\n"
+            "· vLLM：http://<IP>:8000/v1\n"
+            "若 8000 端口不是推理服务（例如别的 Web 应用），请改成实际提供 /v1/chat/completions 的地址与端口。"
         )
-        registry.register(exec_tool)
-    except Exception as e:
-        logger.warning("Failed to register exec tool: %s", e)
-
-    # Register web tools (web_search, web_fetch)
-    extra_schemas: list[dict] = []
-    try:
-        from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
-        ws = WebSearchTool()
-        registry.register(ws)
-        extra_schemas.append({"type": "function", "function": {"name": ws.name, "description": ws.description, "parameters": ws.parameters}})
-
-        wf = WebFetchTool()
-        registry.register(wf)
-        extra_schemas.append({"type": "function", "function": {"name": wf.name, "description": wf.description, "parameters": wf.parameters}})
-    except Exception as e:
-        logger.warning("Failed to register web tools: %s", e)
-
-    # Register get_all_tabs tool
-    try:
-        from nanobot.agent.tools.base import Tool
-        import httpx
-
-        class GetAllTabsTool(Tool):
-            name = "get_all_tabs"
-            description = "Get content from all open browser tabs. Returns titles, URLs, and content summaries of all tabs for cross-tab analysis."
-            parameters = {"type": "object", "properties": {}}
-
-            async def execute(self, **kwargs) -> str:
-                try:
-                    async with httpx.AsyncClient() as client:
-                        response = await client.get("http://127.0.0.1:8002/tabs-content", timeout=10.0)
-                        data = response.json()
-                        tabs = data.get("tabs", [])
-                        if not tabs:
-                            return "没有打开的标签页。"
-
-                        result = f"共有 {len(tabs)} 个打开的标签页：\n\n"
-                        for tab in tabs:
-                            result += f"--- 标签页: {tab.get('title', 'Unknown')} ---\n"
-                            result += f"URL: {tab.get('url', 'Unknown')}\n"
-                            result += f"内容摘要:\n{tab.get('content', '无内容')[:3000]}\n\n"
-                        return result
-                except Exception as e:
-                    return f"获取标签页内容失败: {e}"
-
-        registry.register(GetAllTabsTool())
-    except Exception as e:
-        logger.warning("Failed to register get_all_tabs tool: %s", e)
-
-    return registry, extra_schemas
-
-
-def _create_nanobot_provider(cfg=None) -> tuple[LLMProvider, str, str]:
-    """Create nanobot LLM provider from config.
-
-    Returns (provider, model, provider_name).
-    Raises ValueError if no valid config found.
-    """
-    import json
-
-    if cfg is None:
-        # Load raw JSON and apply legacy migration
-        if NANOBOT_CONFIG.exists():
-            with open(NANOBOT_CONFIG, encoding="utf-8") as f:
-                raw = json.load(f)
-        else:
-            raw = {}
-
-        # Apply legacy migrations (preserves unknown providers like 'minimax-bendi')
-        raw = _migrate_config(raw)
-        # Keep raw migrated providers before Pydantic strips unknown fields
-        migrated_providers = raw.get("providers", {})
-
-        # Build Config from migrated dict (bypass file re-read)
-        from nanobot.config.schema import Config
-        cfg = Config.model_validate(raw)
-    else:
-        migrated_providers = {}
-
-    defaults = cfg.agents.defaults
-    provider_name = cfg.get_provider_name(defaults.model) or defaults.provider
-    model = defaults.model
-
-    # Try to get provider config by model first, then by provider name as fallback
-    provider_cfg = cfg.get_provider(model)
-    if provider_cfg is None and provider_name:
-        # Provider may not be in nanobot's registry — look it up in raw migrated config
-        provider_cfg = migrated_providers.get(provider_name)
-
-    api_key = (provider_cfg.api_key if hasattr(provider_cfg, 'api_key') else provider_cfg.get("api_key", "")) if provider_cfg else ""
-    api_base = (provider_cfg.api_base if hasattr(provider_cfg, 'api_base') else provider_cfg.get("api_base", "")) if provider_cfg else ""
-    if not api_base:
-        api_base = cfg.get_api_base(model) or ""
-
-    if not model:
-        raise ValueError("未配置模型，请在设置中选择模型。")
-    if not api_key and not api_base:
-        raise ValueError("未找到有效的服务商配置，请在设置中配置 API Key。")
-
-    # Create provider based on provider name
-    if provider_name == "anthropic":
-        provider = AnthropicProvider(
-            api_key=api_key,
-            api_base=api_base,
-            default_model=model,
+    if "401" in msg or "403" in msg or "unauthorized" in low or "forbidden" in low:
+        return f"API 鉴权失败（401/403），请检查 API Key 与服务商是否匹配。\n详情：{msg}"
+    if "connection" in low or "refused" in low or "timed out" in low or "timeout" in low:
+        return (
+            f"无法连接到模型服务：{msg}\n"
+            f"请确认 API Base「{base}」在本机网络可达，且推理进程已启动。"
         )
-    elif provider_name == "azure_openai":
-        provider = AzureOpenAIProvider(
-            api_key=api_key,
-            api_base=api_base,
-            default_model=model,
-        )
-    else:
-        # OpenAI-compatible (openrouter, deepseek, dashscope, openai, siliconflow, etc.)
-        provider = OpenAICompatProvider(
-            api_key=api_key,
-            api_base=api_base,
-            default_model=model,
-        )
+    return f"模型调用失败：{msg}"
 
-    logger.info("Using provider: %s, model: %s", provider_name, model)
-    return provider, model, provider_name
+
+def _resolve_litellm_model(model: str, provider_name: str, api_base: str | None, api_key: str) -> str:
+    """Return a LiteLLM-compatible model string for the given config."""
+    # If the model already has a provider prefix (e.g. "openai/gpt-4"), use as-is
+    if "/" in model:
+        return model
+
+    # Known nanobot provider → known LiteLLM prefix
+    _KNOWN_PREFIXES: dict[str, str] = {
+        "openai": "",           # no prefix needed
+        "anthropic": "anthropic",
+        "deepseek": "deepseek",
+        "gemini": "gemini",
+        "zhipu": "zai",
+        "dashscope": "dashscope",
+        "moonshot": "moonshot",
+        "minimax": "minimax",
+        "siliconflow": "openai",  # OpenAI-compat gateway
+        "aihubmix": "openai",
+        "volcengine": "volcengine",
+        "groq": "groq",
+        "openrouter": "openrouter",
+        "vllm": "hosted_vllm",
+    }
+    prefix = _KNOWN_PREFIXES.get(provider_name)
+    if prefix is not None:
+        if prefix:
+            return f"{prefix}/{model}"
+        return model  # openai: no prefix
+
+    # Unknown / custom provider with a custom api_base → treat as OpenAI-compat
+    if api_base:
+        os.environ["OPENAI_API_KEY"] = api_key
+        return f"openai/{model}"
+
+    return model
 
 
 class AgentMessage:
     """Structured message yielded by the agent stream."""
 
     def __init__(self, mtype: str, content: Any, **kwargs) -> None:
-        self.type = mtype      # "token" | "reasoning" | "tool_call" | "tool_result" | "done" | "error"
+        self.type = mtype      # "token" | "tool_call" | "tool_result" | "done" | "error"
         self.content = content
         self.extra = kwargs
 
@@ -680,60 +365,8 @@ class AgentMessage:
         return d
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Streaming hook — nanobot AgentHook-compatible interface for streaming output
-# ─────────────────────────────────────────────────────────────────────────────
-
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.runner import AgentRunSpec, AgentRunResult
-
-
-class StreamingAgentHook(AgentHook):
-    """
-    AgentHook that intercepts token stream and tool execution for the Electron UI.
-
-    Implements nanobot's AgentHook interface so it can be used with AgentRunner,
-    while also providing a standalone streaming mode via process_streaming().
-    """
-
-    def __init__(self):
-        super().__init__()
-        self._response_content = ""
-        self._tool_results: dict[str, tuple[str, Any]] = {}  # call_id -> (name, result)
-
-    def wants_streaming(self) -> bool:
-        return True
-
-    async def on_stream(self, context: AgentHookContext, delta: str) -> None:
-        """Called for each text delta during streaming."""
-        self._response_content += delta
-
-    async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
-        """Called when streaming of a response ends."""
-        pass
-
-    async def before_execute_tools(self, context: AgentHookContext) -> None:
-        """Called before executing tool calls."""
-        pass
-
-    async def after_iteration(self, context: AgentHookContext) -> None:
-        """Called after each agent iteration."""
-        pass
-
-    def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
-        """Called to finalize the response content."""
-        return content
-
-    def get_content(self) -> str:
-        return self._response_content
-
-    def clear(self) -> None:
-        self._response_content = ""
-        self._tool_results.clear()
-
-
 class AgentManager:
-    """Streaming agent loop for one session (Electron edition).
+    """Streaming LiteLLM agent loop for one session (Electron edition).
 
     browser_page is ignored — browser control goes through the Electron HTTP bridge.
     """
@@ -742,106 +375,33 @@ class AgentManager:
         self.session_id = session_id
         self.browser_page = browser_page  # kept for API compat, unused in Electron
         self._history: list[dict] = []
-        self._provider_error: str | None = None  # 记录 provider 加载失败原因
         self._nanobot_available = self._check_nanobot()
-        self._stop_requested: bool = False  # 停止标志
-
-    def stop(self) -> None:
-        """请求停止当前生成"""
-        self._stop_requested = True
+        self._stop_event = asyncio.Event()
 
     def _check_nanobot(self) -> bool:
-        """Check if nanobot providers are available. Captures all exceptions for diagnosis."""
         try:
-            from nanobot.config.loader import load_config
-            from nanobot.providers import AnthropicProvider, OpenAICompatProvider
-            logger.info("nanobot providers loaded OK")
+            import litellm  # noqa: F401
             return True
-        except ImportError as e:
-            self._provider_error = str(e)
-            logger.error("nanobot ImportError: %s", e)
-            return False
-        except Exception as e:
-            self._provider_error = f"{type(e).__name__}: {e}"
-            logger.error("nanobot failed to load: %s: %s", type(e).__name__, e, exc_info=True)
+        except ImportError:
+            logger.warning("litellm not installed; running in fallback mode")
             return False
 
-    async def chat(self, user_message: str, files: list = None) -> AsyncGenerator[AgentMessage, None]:
+    def stop(self) -> None:
+        """Signal the agent loop to stop as soon as possible."""
+        self._stop_event.set()
+
+    async def chat(self, user_message: str, files: list | None = None) -> AsyncGenerator[AgentMessage, None]:
         """Stream agent responses for a user message."""
-        self._stop_requested = False  # 重置停止标志
-
-        logger.info("[DEBUG] manager.chat called: user_message='%s', files=%s",
-                    user_message[:100] if user_message else "", files[:1] if files else "none")
+        self._stop_event.clear()
+        content: list[dict] | str = user_message
         if files:
-            for idx, f in enumerate(files):
-                data_preview = f.get('data', '')[:50] if f.get('data') else 'None'
-                logger.info("[DEBUG] file %d: name=%s, type=%s, data=%s...",
-                           idx, f.get('name'), f.get('type'), data_preview)
-
-        # 处理文件上传：保存到工作区，让模型通过 skills 读取
-        uploaded_files = []
-        if files:
-            import base64
-            # 确保工作区目录存在
-            session_workspace = NANOBOT_WORKSPACE / self.session_id
-            session_workspace.mkdir(parents=True, exist_ok=True)
-
+            content = [{"type": "text", "text": user_message}]
             for f in files:
-                name = f.get("name", "unnamed")
-                data = f.get("data", "")
-                file_type = f.get("type", "")
-
-                if not data or "," not in data:
-                    logger.warning("Invalid file data for %s", name)
-                    continue
-
-                try:
-                    # 解码 base64 数据
-                    base64_data = data.split(",", 1)[1]
-                    file_bytes = base64.b64decode(base64_data)
-
-                    # 保存到工作区
-                    file_path = session_workspace / name
-                    # 处理文件名冲突
-                    counter = 1
-                    original_name = name
-                    while file_path.exists():
-                        stem = Path(original_name).stem
-                        suffix = Path(original_name).suffix
-                        name = f"{stem}_{counter}{suffix}"
-                        file_path = session_workspace / name
-                        counter += 1
-
-                    file_path.write_bytes(file_bytes)
-                    uploaded_files.append({
-                        "name": name,
-                        "path": str(file_path),
-                        "type": file_type,
-                        "size": len(file_bytes)
-                    })
-                    logger.info("Saved file to workspace: %s (%d bytes)", file_path, len(file_bytes))
-                except Exception as e:
-                    logger.warning("Failed to save file %s: %s", name, e)
-
-        # 构建用户消息
-        if files:
-            content = []
-            if user_message:
-                content.append({"type": "text", "text": user_message})
-
-            # 添加文件引用信息
-            for f in uploaded_files:
-                file_info = f"\n\n[文件已上传: {f['name']}]\n"
-                file_info += f"路径: {f['path']}\n"
-                file_info += f"类型: {f['type']}\n"
-                file_info += f"大小: {f['size']} bytes\n"
-                file_info += f"你可以使用 read_file 工具读取此文件。\n"
-                content.append({"type": "text", "text": file_info})
-
-            self._history.append({"role": "user", "content": content})
-            logger.info("[DEBUG] Built user message with %d uploaded files", len(uploaded_files))
-        else:
-            self._history.append({"role": "user", "content": user_message})
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f.get("data", "")},
+                })
+        self._history.append({"role": "user", "content": content})
 
         if self._nanobot_available:
             async for msg in self._streaming_chat():
@@ -850,359 +410,192 @@ class AgentManager:
             async for msg in self._fallback_chat(user_message):
                 yield msg
 
-    def _is_reasoning_model(self, model: str) -> bool:
-        """Check if the model is a reasoning model (e.g., DeepSeek R1, Claude extended thinking)."""
-        reasoning_keywords = [
-            "deepseek-reasoner",
-            "deepseek-r1",
-            "claude-opus-4-6",
-            "o1-",
-            "o3-",
-        ]
-        model_lower = model.lower()
-        return any(keyword in model_lower for keyword in reasoning_keywords)
-
-    async def _stream_with_reasoning(
-        self,
-        provider,
-        messages: list[dict],
-        tools: list[dict],
-        model: str,
-        token_queue: asyncio.Queue,
-        reasoning_queue: asyncio.Queue,
-        stop_event: asyncio.Event,
-        max_tokens: int = 0,
-    ) -> Any:
-        """Stream LLM response with reasoning content support.
-
-        For reasoning models like DeepSeek R1, captures reasoning_content separately
-        from the main content.
-        """
-        import asyncio
-
-        # Build request kwargs similar to nanobot's provider
-        kwargs = {
-            "model": model,
-            "messages": messages,
-            "tools": tools if tools else None,
-            "tool_choice": "auto" if tools else None,
-            "temperature": 0.1,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        # Add max_tokens if specified (> 0)
-        if max_tokens > 0:
-            kwargs["max_tokens"] = max_tokens
-        # Remove None values
-        kwargs = {k: v for k, v in kwargs.items() if v is not None}
-
-        content_parts = []
-        reasoning_parts = []
-        chunks = []
-
-        try:
-            stream = await provider._client.chat.completions.create(**kwargs)
-            async for chunk in stream:
-                if stop_event.is_set():
-                    break
-
-                chunks.append(chunk)
-
-                if not chunk.choices:
-                    continue
-
-                choice = chunk.choices[0]
-                delta = choice.delta
-
-                if not delta:
-                    continue
-
-                # Capture reasoning content (for DeepSeek R1)
-                reasoning_text = getattr(delta, "reasoning_content", None)
-                if reasoning_text:
-                    reasoning_parts.append(reasoning_text)
-                    await reasoning_queue.put(reasoning_text)
-
-                # Capture main content
-                text = getattr(delta, "content", None)
-                if text:
-                    content_parts.append(text)
-                    await token_queue.put(text)
-
-        except Exception as e:
-            logger.exception("Error in reasoning stream")
-            # Return a simple response object with what we have so far
-            return type(
-                "obj",
-                (object,),
-                {
-                    "has_tool_calls": False,
-                    "content": "".join(content_parts),
-                    "reasoning_content": "".join(reasoning_parts),
-                    "tool_calls": [],
-                },
-            )()
-
-        # Build response object
-        full_content = "".join(content_parts)
-        full_reasoning = "".join(reasoning_parts)
-
-        # Parse tool calls from chunks if needed (simplified version)
-        has_tool_calls = False
-        tool_calls = []
-
-        # Check if any chunk has tool calls
-        for chunk in chunks:
-            if hasattr(chunk, 'choices') and chunk.choices:
-                delta = chunk.choices[0].delta
-                if delta and getattr(delta, 'tool_calls', None):
-                    has_tool_calls = True
-                    break
-
-        return type(
-            "obj",
-            (object,),
-            {
-                "has_tool_calls": has_tool_calls,
-                "content": full_content,
-                "reasoning_content": full_reasoning,
-                "tool_calls": tool_calls,
-            },
-        )()
-
-    def _get_agent_limits(self) -> tuple[int, int]:
-        """Read agent limits from config. Returns (max_tokens, max_iterations). 0 means unlimited."""
-        try:
-            if NANOBOT_CONFIG.exists():
-                data = json.loads(NANOBOT_CONFIG.read_text(encoding="utf-8"))
-                defaults = data.get("agents", {}).get("defaults", {})
-                max_tokens = defaults.get("maxTokens", 0)
-                max_iterations = defaults.get("maxIterations", 0)
-                return int(max_tokens) if max_tokens else 0, int(max_iterations) if max_iterations else 0
-        except Exception as e:
-            logger.debug("Failed to read agent limits: %s", e)
-        return 0, 0
-
     async def _streaming_chat(self) -> AsyncGenerator[AgentMessage, None]:
-        """Streaming agent loop using nanobot's native providers."""
+        """Streaming agent loop using LiteLLM directly."""
+        import litellm
+        litellm.suppress_debug_info = True
+        litellm.drop_params = True
 
-        # Create provider from nanobot config
-        try:
-            provider, model, provider_name = _create_nanobot_provider()
-        except ValueError as e:
-            yield AgentMessage("error", str(e))
+        cfg = _load_config()
+        defaults = cfg.get("agents", {}).get("defaults", {})
+        provider_name: str = defaults.get("provider", "")
+        model: str = defaults.get("model", "")
+
+        providers_map: dict = cfg.get("providers", {})
+        provider_cfg: dict = providers_map.get(provider_name, {})
+        if not provider_cfg and providers_map:
+            provider_name, provider_cfg = next(iter(providers_map.items()))
+
+        api_key: str = provider_cfg.get("apiKey", "") or ""
+        api_base: str | None = _normalize_litellm_api_base(provider_cfg.get("apiBase", "") or None)
+
+        if not model:
+            yield AgentMessage("error", "未配置模型，请在设置中选择模型。")
             return
-        except Exception as e:
-            logger.exception("Failed to create provider")
-            yield AgentMessage("error", f"Provider 创建失败：{e}")
+        if not api_key and not api_base:
+            yield AgentMessage("error", "未找到有效的服务商配置，请在设置中配置 API Key。")
             return
 
-        # Read agent limits from config
-        config_max_tokens, config_max_iterations = self._get_agent_limits()
-        logger.info("Agent limits: max_tokens=%s, max_iterations=%s",
-                    config_max_tokens if config_max_tokens > 0 else "unlimited",
-                    config_max_iterations if config_max_iterations > 0 else "unlimited")
+        resolved_model = _resolve_litellm_model(model, provider_name, api_base, api_key)
+        logger.info("Using model: %s (resolved: %s)", model, resolved_model)
+        if api_base:
+            logger.info("LiteLLM api_base=%s (requests typically go to …/v1/chat/completions)", api_base)
 
-        # Check if using a reasoning model
-        is_reasoning = self._is_reasoning_model(model)
-
-        # Browser tools registered in nanobot ToolRegistry
-        browser_registry, extra_tool_schemas = _build_browser_tool_registry()
-        # Raw schemas still needed for the LLM provider (registry handles execution)
-        tools = [*_BROWSER_TOOL_SCHEMAS, _READ_FILE_SCHEMA, _WRITE_FILE_SCHEMA, _EDIT_FILE_SCHEMA, _LIST_DIR_SCHEMA, _EXEC_SCHEMA, _GET_ALL_TABS_SCHEMA, *extra_tool_schemas]
+        # Browser tools available when a page is attached
+        # In Electron edition, browser tools always go through the HTTP bridge
+        from agent.browser_tool import BrowserTools
+        browser_tools_obj = BrowserTools()
+        tools = _BROWSER_TOOL_SCHEMAS
 
         # Build messages: system (with memory) + history (already includes latest user turn)
         messages: list[dict] = [{"role": "system", "content": _build_system_prompt()}] + self._history
-        import json
-        logger.info("[DEBUG] messages to be sent to LLM: %s", json.dumps(messages, ensure_ascii=False)[:800])
 
-        # 特别检查最后一条用户消息是否包含图片
-        if messages:
-            last_msg = messages[-1]
-            if last_msg.get("role") == "user":
-                content = last_msg.get("content")
-                if isinstance(content, list):
-                    image_items = [item for item in content if isinstance(item, dict) and item.get("type") == "image_url"]
-                    logger.info("[DEBUG] Found %d image_url items in user message", len(image_items))
-                    for idx, img in enumerate(image_items):
-                        url = img.get("image_url", {}).get("url", "")[:50]
-                        logger.info("[DEBUG] image %d url: %s...", idx, url)
-                else:
-                    logger.info("[DEBUG] User content is string: %s", content[:100] if content else "empty")
+        raw_max_iterations = defaults.get("maxIterations")
+        raw_max_tokens = defaults.get("maxTokens")
+        max_iterations = int(raw_max_iterations) if raw_max_iterations else 0
+        max_tokens = int(raw_max_tokens) if raw_max_tokens else 0
+        # 0 means unlimited
+        effective_max_iterations = max_iterations if max_iterations > 0 else 9999
+        unlimited_iterations = max_iterations == 0
+        unlimited_tokens = max_tokens == 0
 
-        assistant_content = ""
-
-        # Streaming infrastructure
-        token_queue: asyncio.Queue[str] = asyncio.Queue()
-        reasoning_queue: asyncio.Queue[str] = asyncio.Queue()
-        # Event for responsive stop detection
-        stop_event = asyncio.Event()
-
-        async def token_callback(delta: str) -> None:
-            """Called by provider for each streaming token delta."""
-            await token_queue.put(delta)
-
-        # Mirror _stop_requested to our Event for responsiveness
-        def _on_stop():
-            stop_event.set()
-
-        original_stop = self.stop
-        self.stop = lambda: (_on_stop(), original_stop())
-
-        async def _check_stop() -> bool:
-            """Check if stop was requested. Returns True if should stop."""
-            if self._stop_requested or stop_event.is_set():
-                return True
-            return False
-
-        # For reasoning models, we need to capture reasoning_content separately
-        reasoning_content = ""
+        # Track repeated identical tool calls to detect infinite loops
+        last_tool_signature: tuple[str, str] | None = None
+        repeated_tool_count = 0
 
         try:
-            iteration = 0
-            while True:
-                # Check stop before each iteration
-                if await _check_stop():
-                    yield AgentMessage("error", "已停止生成")
-                    return
+            for iteration in range(effective_max_iterations):
+                if self._stop_event.is_set():
+                    logger.info("Agent loop stopping early at iteration %d (stop requested)", iteration + 1)
+                    break
 
-                # Drain any remaining tokens from previous iteration
-                while not token_queue.empty():
-                    try:
-                        token_queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                while not reasoning_queue.empty():
-                    try:
-                        reasoning_queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
+                # ── Context truncation: keep system + recent history ──────────
+                # Cap total messages to avoid context-limit errors on long tasks.
+                # System prompt is always preserved; we drop oldest non-system turns.
+                if len(messages) > 50:
+                    dropped = len(messages) - 50
+                    messages = [messages[0]] + messages[dropped + 1:]
+                    logger.info("Truncated %d oldest messages to stay within context limit", dropped)
 
-                # ── Streaming LLM call via nanobot provider ──────────────────
-                stop_event.clear()
-
-                # Check iteration limit
-                if config_max_iterations > 0 and iteration >= config_max_iterations:
-                    yield AgentMessage("error", f"已达到最大迭代次数限制 ({config_max_iterations})")
-                    return
-                iteration += 1
-
-                # Check if this is a reasoning model that needs special handling
-                if is_reasoning and hasattr(provider, '_client'):
-                    # For reasoning models, use direct client access to capture reasoning_content
-                    response = await self._stream_with_reasoning(
-                        provider, messages, tools, model, token_queue, reasoning_queue, stop_event,
-                        max_tokens=config_max_tokens
-                    )
+                if unlimited_iterations:
+                    logger.info("Agent iteration %d (unlimited), messages=%d", iteration + 1, len(messages))
                 else:
-                    # Standard streaming for non-reasoning models
-                    chat_kwargs = {
-                        "messages": messages,
-                        "tools": tools,
-                        "model": model,
-                        "temperature": 0.1,
-                        "on_content_delta": token_callback,
-                    }
-                    if config_max_tokens > 0:
-                        chat_kwargs["max_tokens"] = config_max_tokens
-                    stream_task = asyncio.create_task(
-                        provider.chat_stream(**chat_kwargs)
-                    )
+                    logger.info("Agent iteration %d/%d, messages=%d", iteration + 1, max_iterations, len(messages))
 
-                    # Drain tokens from queue WHILE stream is running (concurrent)
-                    response_content = ""
-                    while not stop_event.is_set():
-                        try:
-                            token = await asyncio.wait_for(token_queue.get(), timeout=0.05)
-                            response_content += token
-                            assistant_content += token
-                            yield AgentMessage("token", token)
-                        except asyncio.TimeoutError:
-                            if stream_task.done():
-                                break
-                            continue
+                # ── Streaming LLM call ────────────────────────────────────────
+                call_kwargs: dict[str, Any] = {
+                    "model": resolved_model,
+                    "messages": messages,
+                    "stream": True,
+                    "temperature": 0.1,
+                    "api_key": api_key,
+                }
+                if not unlimited_tokens:
+                    call_kwargs["max_tokens"] = max_tokens
+                if api_base:
+                    call_kwargs["api_base"] = api_base
+                if tools:
+                    call_kwargs["tools"] = tools
+                    call_kwargs["tool_choice"] = "auto"
+                    # Force single tool call per round to prevent ordering bugs
+                    # (e.g. click before type causing empty-form submissions)
+                    call_kwargs["parallel_tool_calls"] = False
 
-                    # Grab any remaining tokens
-                    while not token_queue.empty():
-                        try:
-                            token = token_queue.get_nowait()
-                            response_content += token
-                            assistant_content += token
-                            yield AgentMessage("token", token)
-                        except asyncio.QueueEmpty:
-                            break
+                response_content = ""
+                # Accumulate streaming tool calls: {index: {id, name, args_str}}
+                pending_tool_calls: dict[int, dict] = {}
+                finish_reason: str | None = None
 
-                    # Get the final LLM response
-                    try:
-                        if not stream_task.done():
-                            stream_task.cancel()
-                        response = stream_task.result()
-                    except (asyncio.CancelledError, asyncio.InvalidStateError):
-                        response = type("obj", (object,), {"has_tool_calls": False, "content": response_content})()
-                    except Exception:
-                        response = type("obj", (object,), {"has_tool_calls": False, "content": response_content})()
+                stream = await litellm.acompletion(**call_kwargs)
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
 
-                    # Final immediate drain - grab any remaining tokens
-                    while not token_queue.empty():
-                        try:
-                            token = token_queue.get_nowait()
-                            response_content += token
-                            assistant_content += token
-                            yield AgentMessage("token", token)
-                        except asyncio.QueueEmpty:
-                            break
+                    # Text tokens
+                    if delta.content:
+                        response_content += delta.content
+                        yield AgentMessage("token", delta.content)
 
-                # For reasoning model, yield the content collected in _stream_with_reasoning
-                if is_reasoning:
-                    response_content = response.content if hasattr(response, 'content') else ""
-                    # Extract reasoning content from response
-                    new_reasoning = getattr(response, 'reasoning_content', '')
-                    if new_reasoning:
-                        reasoning_content = new_reasoning
-                        yield AgentMessage("reasoning", reasoning_content)
-                    # Then yield the actual content token by token
-                    for token in response_content:
-                        assistant_content += token
-                        yield AgentMessage("token", token)
+                    # Tool call chunks
+                    if delta.tool_calls:
+                        for tc_chunk in delta.tool_calls:
+                            idx = tc_chunk.index
+                            if idx not in pending_tool_calls:
+                                pending_tool_calls[idx] = {
+                                    "id": tc_chunk.id or "",
+                                    "name": "",
+                                    "args_str": "",
+                                }
+                            entry = pending_tool_calls[idx]
+                            if tc_chunk.id:
+                                entry["id"] = tc_chunk.id
+                            if tc_chunk.function:
+                                if tc_chunk.function.name:
+                                    entry["name"] += tc_chunk.function.name
+                                if tc_chunk.function.arguments:
+                                    entry["args_str"] += tc_chunk.function.arguments
 
-                # Check stop after streaming
-                if await _check_stop():
-                    yield AgentMessage("error", "已停止生成")
-                    return
+                logger.info("Iteration %d finish_reason=%s pending_tools=%d", iteration + 1, finish_reason, len(pending_tool_calls))
 
                 # ── If no tool calls, we're done ─────────────────────────────
-                if not response.has_tool_calls:
-                    messages.append({"role": "assistant", "content": response_content})
+                if not pending_tool_calls:
+                    assistant_turn = {"role": "assistant", "content": response_content}
+                    messages.append(assistant_turn)
+                    self._history.append(assistant_turn)
                     break
 
                 # ── Execute tool calls ────────────────────────────────────────
-                tool_call_list = [
-                    tc.to_openai_tool_call() for tc in response.tool_calls
-                ]
-                messages.append({
+                # Add assistant turn with tool_calls
+                tool_call_list = []
+                for entry in pending_tool_calls.values():
+                    tool_call_list.append({
+                        "id": entry["id"],
+                        "type": "function",
+                        "function": {
+                            "name": entry["name"],
+                            "arguments": entry["args_str"],
+                        },
+                    })
+                assistant_turn = {
                     "role": "assistant",
                     "content": response_content or None,
                     "tool_calls": tool_call_list,
-                })
+                }
+                messages.append(assistant_turn)
+                self._history.append(assistant_turn)
 
-                for tc in response.tool_calls:
-                    call_id = tc.id
-                    tool_name = tc.name
-                    args = tc.arguments
+                for entry in pending_tool_calls.values():
+                    if self._stop_event.is_set():
+                        logger.info("Agent stopping before executing tool (stop requested)")
+                        break
+
+                    call_id = entry["id"]
+                    tool_name = entry["name"]
+                    try:
+                        args = json.loads(entry["args_str"] or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
 
                     yield AgentMessage("tool_call", tool_name,
-                                       args=args, call_id=call_id, name=tool_name)
+                                       args=args, call_id=call_id)
 
-                    # Check stop before executing tool
-                    if await _check_stop():
-                        yield AgentMessage("error", "已停止生成")
-                        return
+                    if self._stop_event.is_set():
+                        logger.info("Agent skipping tool execution (stop requested)")
+                        break
 
-                    # Execute via ToolRegistry
-                    try:
-                        result = await browser_registry.execute(tool_name, args)
-                    except Exception as exc:
-                        result = f"Tool error: {exc}"
+                    # Execute
+                    if browser_tools_obj and hasattr(browser_tools_obj, tool_name):
+                        try:
+                            fn = getattr(browser_tools_obj, tool_name)
+                            result = await fn(**args)
+                        except Exception as exc:
+                            result = f"Tool error: {exc}"
+                    else:
+                        result = f"Tool '{tool_name}' not available."
 
                     # Truncate screenshot base64 in the UI message
                     ui_result = result
@@ -1213,7 +606,19 @@ class AgentManager:
                     yield AgentMessage("tool_result", ui_result,
                                        call_id=call_id, name=tool_name)
 
-                    # For screenshot results, inject as vision content
+                    # ── Loop detection: same tool + same args repeatedly ─────────
+                    tool_sig = (tool_name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+                    if last_tool_signature == tool_sig:
+                        repeated_tool_count += 1
+                    else:
+                        repeated_tool_count = 1
+                        last_tool_signature = tool_sig
+                    if repeated_tool_count >= 5:
+                        logger.warning("Detected repeated tool loop: %s with args %s", tool_name, args)
+                        yield AgentMessage("error", f"Agent 似乎陷入了循环，连续 {repeated_tool_count} 次调用「{tool_name}」且参数相同。已自动终止，请尝试换种方式描述需求。")
+                        return
+
+                    # For screenshot results, inject as vision content for LLMs that support it
                     if isinstance(result, str) and result.startswith("screenshot:") and "data:image/jpeg;base64," in result:
                         b64_data = result.split("data:image/jpeg;base64,", 1)[1]
                         tool_content: Any = [
@@ -1223,30 +628,44 @@ class AgentManager:
                     else:
                         tool_content = str(result)
 
-                    messages.append({
+                    tool_turn = {
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": tool_name,
                         "content": tool_content,
-                    })
+                    }
+                    messages.append(tool_turn)
+                    self._history.append(tool_turn)
+
+                if self._stop_event.is_set():
+                    logger.info("Agent loop breaking after tool execution (stop requested)")
+                    break
+            else:
+                # Loop exhausted without break
+                if unlimited_iterations:
+                    logger.warning("Agent stopped after an unexpectedly high number of iterations")
+                    yield AgentMessage("error", "Agent 运行了过多轮次后自动停止。你可以尝试简化需求或继续追问。")
+                else:
+                    logger.warning("Agent stopped after reaching max_iterations=%s", max_iterations)
+                    yield AgentMessage("error", f"Agent 已达到最大迭代次数（{max_iterations} 次），任务尚未完成。你可以尝试简化需求或继续追问。")
+                return
 
         except Exception as exc:
             logger.exception("Streaming chat error")
-            yield AgentMessage("error", f"模型调用失败：{exc}")
+            yield AgentMessage("error", _format_llm_error(exc, api_base))
             return
-        finally:
-            self.stop = original_stop
 
-        self._history.append({"role": "assistant", "content": assistant_content})
-        yield AgentMessage("done", assistant_content)
+        final_content = ""
+        if self._history and self._history[-1]["role"] == "assistant" and isinstance(self._history[-1].get("content"), str):
+            final_content = self._history[-1]["content"]
+        yield AgentMessage("done", final_content)
 
     async def _fallback_chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
-        """Simple fallback when nanobot providers are not available."""
-        error_detail = f"\n\n错误详情：{self._provider_error}" if self._provider_error else ""
+        """Simple fallback when litellm is not available."""
         reply = (
-            "[nanobot providers 未安装或加载失败，无法调用大模型]\n\n"
+            "[litellm 未安装，无法调用大模型]\n\n"
             f"你说：{user_message}\n\n"
-            f"请安装 nanobot-ai 并配置 ~/.nanobot/config.json 启用 AI 回复。{error_detail}"
+            "请安装 litellm 并配置 ~/.nanobot/config.json 启用 AI 回复。"
         )
         for word in reply.split(" "):
             yield AgentMessage("token", word + " ")

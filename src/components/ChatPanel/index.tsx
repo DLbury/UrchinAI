@@ -1,27 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, Trash2, Bot, User, ChevronDown, ChevronRight, Terminal, CheckCircle, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings, Copy, Square, Edit2, Plus, X, Paperclip, Brain, Wrench } from 'lucide-react'
+import { Send, Trash2, Bot, User, ChevronDown, Terminal, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings, Copy, Square, Edit2, Plus, X, Paperclip, Brain } from 'lucide-react'
 import { useWebSocket } from '../../hooks/useWebSocket'
 import MarkdownRenderer from '../common/MarkdownRenderer'
-import { listScripts, getConfig, updateModel, getProviders, createScript, updateScript, deleteScript, listChatSessions, saveChatSessions } from '../../api/client'
-import type { ChatMessage, ToolCall, WSMessage } from '../../types'
+import { listScripts, getConfig, updateModel, getProviders, createScript, updateScript, deleteScript } from '../../api/client'
+import type { ChatMessage, ChatSession, ToolCall, WSMessage } from '../../types'
 import { MessageAttachments, InputAttachments } from '../AttachmentsAdapter'
+import { ToolCallsGroup } from '../ToolCallsGroup'
 import {
   Reasoning,
   ReasoningTrigger,
   ReasoningContent,
 } from '@/components/ai-elements/reasoning'
 
-interface ChatSession {
-  id: string
-  name: string
-  createdAt: number
-}
-
 interface ChatPanelProps {
   sessionId: string
   sessions: ChatSession[]
   currentSessionId: string
+  messagesBySession?: Record<string, ChatMessage[]>
   onSwitchSession: (id: string) => void
   onNewSession: () => void
   onRenameSession: (id: string, name: string) => void
@@ -30,7 +26,11 @@ interface ChatPanelProps {
   /** Ref that parent can use to programmatically send a message */
   sendRef?: React.MutableRefObject<((text: string) => void) | null>
   onOpenSettings?: () => void
-  /** Called when sessions or messages change (for persistence) */
+  /** Called when messages change (for persistence) */
+  onMessagesChange?: (messagesBySession: Record<string, ChatMessage[]>) => void
+  /** Called when agent starts or stops operating the browser */
+  onAgentOperatingChange?: (operating: boolean) => void
+  /** Legacy: called when sessions or messages change */
   onSessionsChange?: (sessions: ChatSession[], messagesBySession: Record<string, ChatMessage[]>) => void
 }
 
@@ -102,55 +102,6 @@ const DEFAULT_SCRIPTS: Script[] = [
 ]
 
 
-function ToolCallCard({ tool }: { tool: ToolCall }) {
-  const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
-
-  const statusConfig = {
-    pending: { icon: Loader2, className: 'animate-spin text-yellow-500', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
-    running: { icon: Loader2, className: 'animate-spin text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
-    done: { icon: CheckCircle, className: 'text-green-500', bg: 'bg-green-500/10', border: 'border-green-500/30' },
-    error: { icon: XCircle, className: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/30' },
-  }[tool.status]
-
-  const StatusIcon = statusConfig.icon
-
-  return (
-    <div className={`mt-2 rounded-lg border ${statusConfig.border} ${statusConfig.bg} overflow-hidden`}>
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-2 w-full px-3 py-2.5 text-left hover:bg-nb-raised/30 transition-colors"
-      >
-        <StatusIcon size={14} className={statusConfig.className} />
-        <Wrench size={12} className="text-nb-text-dim" />
-        <span className="font-mono text-sm text-brand-400 font-medium">{tool.name}</span>
-        <span className="text-nb-text-muted text-xs flex-1 truncate">
-          ({Object.keys(tool.args).join(', ')})
-        </span>
-        {expanded ? <ChevronDown size={14} className="text-nb-text-dim" /> : <ChevronRight size={14} className="text-nb-text-dim" />}
-      </button>
-      {expanded && (
-        <div className="border-t border-nb-border/50 px-3 py-3 space-y-3 bg-nb-card/40">
-          <div>
-            <p className="text-nb-text-muted mb-1.5 uppercase tracking-wide text-[10px] font-medium">{t('chat.toolArgs') || '参数'}</p>
-            <pre className="text-nb-text-soft whitespace-pre-wrap break-all font-mono text-[11px] bg-nb-raised/50 rounded-md p-2">
-              {JSON.stringify(tool.args, null, 2)}
-            </pre>
-          </div>
-          {tool.result !== undefined && (
-            <div>
-              <p className="text-nb-text-muted mb-1.5 uppercase tracking-wide text-[10px] font-medium">{t('chat.toolResult') || '结果'}</p>
-              <pre className="text-nb-text-soft whitespace-pre-wrap break-all font-mono text-[11px] bg-nb-raised/50 rounded-md p-2 max-h-40 overflow-y-auto">
-                {tool.result}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: boolean }) {
   const isUser = msg.role === 'user'
   const [showCopy, setShowCopy] = useState(false)
@@ -221,9 +172,27 @@ function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: b
               <MarkdownRenderer content={msg.content} />
             </div>
           )}
-          {/* 用户消息保持纯文本 */}
-          {msg.content && isUser && (
-            <div className="select-text whitespace-pre-wrap">{msg.content}</div>
+          {/* 用户消息：文本 + DOM 元素标签 */}
+          {isUser && (
+            <div className="select-text">
+              {msg.content && <div className="whitespace-pre-wrap">{msg.content}</div>}
+              {/* DOM 元素标签 */}
+              {msg.domElements && msg.domElements.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {msg.domElements.map((el, idx) => (
+                    <span
+                      key={el.id}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/20 text-white text-xs font-medium"
+                      title={el.selector}
+                    >
+                      <span className="text-[10px] opacity-80">#{idx + 1}</span>
+                      <span className="uppercase">{el.tagName}</span>
+                      {el.text && <span className="opacity-80 truncate max-w-[100px]">{el.text}</span>}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
           {/* 用户消息的附件图片 - 使用 AI SDK Elements */}
           {isUser && msg.files && msg.files.length > 0 && (
@@ -245,7 +214,11 @@ function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: b
             {formatTime(msg.createdAt)}
           </p>
         )}
-        {msg.toolCalls?.map((tool) => <ToolCallCard key={tool.id} tool={tool} />)}
+        {msg.toolCalls && msg.toolCalls.length > 0 && (
+          <div className="mt-2">
+            <ToolCallsGroup tools={msg.toolCalls} />
+          </div>
+        )}
       </div>
       {isUser && (
         <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-nb-raised to-nb-hover flex items-center justify-center mt-0.5 shadow-sm">
@@ -614,17 +587,27 @@ export default function ChatPanel({
   sessionId,
   sessions,
   currentSessionId,
+  messagesBySession: propMessagesBySession,
   onSwitchSession,
   onNewSession,
   onRenameSession,
   onDeleteSession,
   onAgentNavigate,
   sendRef,
-  onOpenSettings
+  onOpenSettings,
+  onMessagesChange,
+  onAgentOperatingChange
 }: ChatPanelProps) {
   const { t } = useTranslation()
-  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({})
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>(propMessagesBySession || {})
   const messages = messagesBySession[sessionId] ?? []
+
+  // Sync local messages with parent when props change (e.g. from NewTabPage)
+  useEffect(() => {
+    if (propMessagesBySession) {
+      setMessagesBySession(propMessagesBySession)
+    }
+  }, [propMessagesBySession])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   // 使用默认脚本确保立即显示，后端就绪后尝试更新
@@ -638,7 +621,7 @@ export default function ChatPanel({
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; data: string; type: string }[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isDomPicking, setIsDomPicking] = useState(false)
-  const [pickedElement, setPickedElement] = useState<any>(null)
+  const [pickedElements, setPickedElements] = useState<Array<{id: string; tagName: string; text: string; selector: string}>>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -696,13 +679,16 @@ export default function ChatPanel({
 
     const unsubscribe = eAPI.onDomPicked((data: any) => {
       setIsDomPicking(false)
-      setPickedElement(data)
-      // 将选取的元素信息插入到输入框
+      // 添加选中的元素到列表
       if (data) {
-        const elementInfo = `[选中元素: ${data.tagName}${data.id ? '#' + data.id : ''}] ${data.text?.slice(0, 50) || ''}`
-        setInput(prev => {
-          const newInput = prev ? prev + '\n' + elementInfo : elementInfo
-          return newInput
+        setPickedElements(prev => {
+          const newElement = {
+            id: `dom-${Date.now()}`,
+            tagName: data.tagName,
+            text: data.text?.slice(0, 30) || '',
+            selector: data.selector
+          }
+          return [...prev, newElement]
         })
       }
     })
@@ -712,10 +698,19 @@ export default function ChatPanel({
 
   const startDomPicker = async () => {
     const eAPI = (window as any).electronAPI
-    if (!eAPI?.startDomPicker) return
+    if (!eAPI?.startDomPicker) {
+      console.error('DOM picker not available')
+      return
+    }
     try {
       setIsDomPicking(true)
-      await eAPI.startDomPicker()
+      const result = await eAPI.startDomPicker()
+      if (!result?.ok) {
+        console.error('Failed to start DOM picker:', result?.error)
+        setIsDomPicking(false)
+        // 可以在这里添加 toast 提示
+        alert(result?.error || '无法启动元素选择器，请确保已打开网页')
+      }
     } catch (err) {
       console.error('Failed to start DOM picker:', err)
       setIsDomPicking(false)
@@ -731,6 +726,26 @@ export default function ChatPanel({
     } catch (err) {
       console.error('Failed to stop DOM picker:', err)
     }
+  }
+
+  const removePickedElement = async (id: string) => {
+    const eAPI = (window as any).electronAPI
+    // 找到元素的索引（1-based）
+    const index = pickedElements.findIndex(el => el.id === id)
+    if (index !== -1 && eAPI?.removePickedBadge) {
+      // 通知主进程移除网页上对应的 badge
+      await eAPI.removePickedBadge(index + 1)
+    }
+    setPickedElements(prev => prev.filter(el => el.id !== id))
+  }
+
+  // 清除所有选中元素时同步清除网页上的 badges
+  const clearAllPickedElements = async () => {
+    const eAPI = (window as any).electronAPI
+    if (eAPI?.clearAllPickedBadges) {
+      await eAPI.clearAllPickedBadges()
+    }
+    setPickedElements([])
   }
 
   // 开发环境：立即加载；生产环境：等待 backend:ready
@@ -761,35 +776,20 @@ export default function ChatPanel({
     }
   }, [loadConfig, loadScripts])
 
-  // ── Persist messages to backend ───────────────────────────────────────────
+  // ── Persist messages to parent ────────────────────────────────────────────
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Load messages from API on mount
-  useEffect(() => {
-    listChatSessions().then(data => {
-      const msgs: Record<string, ChatMessage[]> = {}
-      for (const s of data.sessions) {
-        msgs[s.id] = (s.messages || []) as ChatMessage[]
-      }
-      setMessagesBySession(msgs)
-    }).catch(() => {})
-  }, [])
 
   // Debounced persist whenever messages change
   useEffect(() => {
+    if (!onMessagesChange) return
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
     persistTimerRef.current = setTimeout(() => {
-      // Merge current sessions (from props) with latest messages
-      const fullSessions = sessions.map(s => ({
-        ...s,
-        messages: messagesBySession[s.id] || [],
-      }))
-      saveChatSessions(fullSessions, sessionId).catch(() => {})
+      onMessagesChange(messagesBySession)
     }, 800)
     return () => {
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
     }
-  }, [messagesBySession, sessions, sessionId])
+  }, [messagesBySession, onMessagesChange])
 
   // 脚本栏横向滚动：使用非被动事件监听器避免 preventDefault 警告
   useEffect(() => {
@@ -866,6 +866,7 @@ export default function ChatPanel({
         scheduleFlush()
       } else if (msg.type === 'tool_call') {
         flushTokenBuffer()
+        onAgentOperatingChange?.(true)
         const toolCall: ToolCall = {
           id: msg.call_id ?? Math.random().toString(36).slice(2),
           name: msg.name ?? '', args: msg.args ?? {}, status: 'running',
@@ -897,9 +898,11 @@ export default function ChatPanel({
         }
       } else if (msg.type === 'done') {
         flushTokenBuffer()
+        onAgentOperatingChange?.(false)
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
       } else if (msg.type === 'error') {
         flushTokenBuffer()
+        onAgentOperatingChange?.(false)
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
         setMessagesBySession(prev => ({
           ...prev,
@@ -907,6 +910,7 @@ export default function ChatPanel({
         }))
       } else if (msg.type === 'stopped') {
         flushTokenBuffer()
+        onAgentOperatingChange?.(false)
         setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
       } else if (msg.type === 'history_cleared') {
         tokenBufferRef.current = ''
@@ -930,21 +934,34 @@ export default function ChatPanel({
 
   const sendMessage = useCallback((overrideText?: string) => {
     const text = (overrideText ?? input).trim()
-    if ((!text && attachedFiles.length === 0) || isStreaming || status !== 'connected') return
+    if ((!text && attachedFiles.length === 0 && pickedElements.length === 0) || isStreaming || status !== 'connected') return
     const userMsgId = `user-${Date.now()}`
     const assistantMsgId = `assistant-${Date.now()}`
 
-    // 构建用户消息内容（包含文件）
-    const userContent = text || (attachedFiles.length > 0 ? `[上传了 ${attachedFiles.length} 个文件]` : '')
-    const messageData: { content: string; files?: { name: string; data: string; type: string }[] } = { content: userContent }
-    if (attachedFiles.length > 0) {
-      messageData.files = [...attachedFiles]
+    // 用户消息内容（纯文本）
+    let displayContent = text || ''
+
+    // 发送给 AI 的内容：包含选择器和工具使用说明
+    let aiContent = text || ''
+    if (pickedElements.length > 0) {
+      const selectors = pickedElements.map((el, idx) =>
+        `[选中元素 #${idx + 1}]: ${el.selector}`
+      ).join('\n')
+      const toolHint = '\n\n使用 `browser_get_text` 工具并传入上述 @N 格式选择器来获取元素内容。例如：browser_get_text(selector="@123456")'
+      aiContent = aiContent ? `${aiContent}\n\n${selectors}${toolHint}` : `${selectors}${toolHint}`
+    }
+
+    if (!displayContent && attachedFiles.length > 0) {
+      displayContent = `[上传了 ${attachedFiles.length} 个文件]`
+    }
+    if (!aiContent && attachedFiles.length > 0) {
+      aiContent = `[上传了 ${attachedFiles.length} 个文件]`
     }
 
     setMessagesBySession(prev => ({
       ...prev,
       [sessionId]: [...(prev[sessionId] ?? []),
-        { id: userMsgId, role: 'user', content: userContent, files: attachedFiles, createdAt: Date.now() },
+        { id: userMsgId, role: 'user', content: displayContent, files: attachedFiles, domElements: [...pickedElements], createdAt: Date.now() },
         { id: assistantMsgId, role: 'assistant', content: '', reasoning: '', toolCalls: [], createdAt: Date.now() },
       ]
     }))
@@ -952,8 +969,14 @@ export default function ChatPanel({
     setIsStreaming(true)
     setInput('')
     setAttachedFiles([])
-    send({ type: 'chat', content: userContent, files: attachedFiles.length > 0 ? attachedFiles : undefined })
-  }, [input, isStreaming, status, send, attachedFiles])
+    // 发送后清空选中的 DOM 元素并同步清除网页上的 badges
+    const eAPI = (window as any).electronAPI
+    if (eAPI?.clearAllPickedBadges) {
+      eAPI.clearAllPickedBadges().catch(() => {})
+    }
+    setPickedElements([])
+    send({ type: 'chat', content: aiContent, files: attachedFiles.length > 0 ? attachedFiles : undefined })
+  }, [input, isStreaming, status, send, attachedFiles, pickedElements])
 
   // Expose sendMessage to parent via ref
   useEffect(() => {
@@ -1323,6 +1346,37 @@ export default function ChatPanel({
 
       {/* 输入框 - 上下布局 */}
       <div className="px-3 py-3 border-t border-nb-border bg-gradient-to-t from-nb-card to-nb-card/80">
+        {/* 选中的 DOM 元素显示 */}
+        {pickedElements.length > 0 && (
+          <div className="flex gap-2 mb-2 flex-wrap">
+            {pickedElements.map((el, index) => (
+              <div
+                key={el.id}
+                className="group flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-br from-brand-500/10 to-brand-600/5 border border-brand-500/30 hover:border-brand-500/50 transition-all cursor-default"
+              >
+                {/* 小角标 */}
+                <div className="flex items-center gap-1.5">
+                  <div className="w-5 h-5 rounded-md bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center text-white text-[10px] font-bold shadow-sm">
+                    #{index + 1}
+                  </div>
+                  <span className="text-xs font-medium text-brand-400">&lt;{el.tagName}&gt;</span>
+                </div>
+                {/* 元素文本 */}
+                <span className="text-xs text-nb-text-soft truncate max-w-[100px]">
+                  {el.text || ''}
+                </span>
+                {/* 删除按钮 */}
+                <button
+                  onClick={() => removePickedElement(el.id)}
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-red-500/20 text-nb-text-dim hover:text-red-400 transition-all"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* 附件预览 - 使用 AI SDK Elements */}
         <InputAttachments
           files={attachedFiles}

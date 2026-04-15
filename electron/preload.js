@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── DOM Element Picker ────────────────────────────────────────────────────
   startDomPicker: () => ipcRenderer.invoke('domPicker:start'),
   stopDomPicker: () => ipcRenderer.invoke('domPicker:stop'),
+  removePickedBadge: (badgeNumber) => ipcRenderer.invoke('domPicker:removeBadge', badgeNumber),
+  clearAllPickedBadges: () => ipcRenderer.invoke('domPicker:clearAllBadges'),
   onDomPicked: (callback) => {
     const handler = (_e, data) => callback(data)
     ipcRenderer.on('domPicker:picked', handler)
@@ -64,6 +66,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── Shell ─────────────────────────────────────────────────────────────────
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+
+  // ── Find in page (Ctrl+F) ─────────────────────────────────────────────────
+  findInPage: (text, options) => ipcRenderer.invoke('webview:findInPage', text, options),
+  stopFindInPage: (action) => ipcRenderer.invoke('webview:stopFindInPage', action),
+  onFoundInPage: (callback) => {
+    const handler = (_e, result) => callback(result)
+    ipcRenderer.on('webview:foundInPage', handler)
+    return () => ipcRenderer.removeListener('webview:foundInPage', handler)
+  },
+  onFindShortcut: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on('shortcut:find', handler)
+    return () => ipcRenderer.removeListener('shortcut:find', handler)
+  },
 
   // ── Backend lifecycle ─────────────────────────────────────────────────────
   onBackendReady: (cb) => {

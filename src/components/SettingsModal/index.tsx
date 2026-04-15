@@ -406,8 +406,11 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
           API Base URL <span className="text-nb-text-muted">（可选）</span>
         </label>
         <input value={row.apiBase} onChange={e => onChange({ apiBase: e.target.value })}
-          placeholder="https://api.provider.com/v1"
+          placeholder="例如 http://192.168.x.x:11434 或 …:1234/v1"
           className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500 transition-colors" />
+        <p className="mt-1 text-[10px] text-nb-text-muted leading-relaxed">
+          须指向提供 OpenAI 兼容接口的服务；程序会请求「Base + /v1/chat/completions」。Ollama 多为端口 11434；LM Studio 常为 /v1；若出现 404，请核对端口是否真是推理服务而非其它网站。
+        </p>
       </div>
 
       {/* 模型列表 */}
@@ -1464,6 +1467,12 @@ function AppearanceTab() {
     getSearchEngine().then(data => {
       setSearchEngine(data.engine || 'bing')
     }).catch(() => {})
+
+    return () => {
+      if (debounceRef.current) {
+        window.clearTimeout(debounceRef.current)
+      }
+    }
   }, [])
 
   const handleFX = (v: boolean) => {
@@ -1474,10 +1483,17 @@ function AppearanceTab() {
     setAdOn(v)
     eAPI?.setAdBlockEnabled(v)
   }
-  const handleLimitsChange = async (tokens: number, iterations: number) => {
+  const debounceRef = useRef<number | null>(null)
+
+  const handleLimitsChange = (tokens: number, iterations: number) => {
     setMaxTokens(tokens)
     setMaxIterations(iterations)
-    await updateAgentLimits(tokens, iterations)
+    if (debounceRef.current) {
+      window.clearTimeout(debounceRef.current)
+    }
+    debounceRef.current = window.setTimeout(() => {
+      updateAgentLimits(tokens, iterations).catch(() => {})
+    }, 500)
   }
 
   const handleSearchEngineChange = async (engine: string) => {

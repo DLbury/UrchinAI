@@ -87,6 +87,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     try:
         chat_task = None
+        chat_lock = asyncio.Lock()
+
+        def on_chat_done(task: asyncio.Task):
+            nonlocal chat_task
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                logger.info("Chat cancelled for session: %s", session_id)
+            except Exception as exc:
+                logger.exception("Chat task error for session %s: %s", session_id, exc)
+            finally:
+                chat_task = None
+
         while True:
             raw = await websocket.receive_text()
             try:
@@ -104,23 +117,35 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 if not content and not files:
                     continue
 
+                async with chat_lock:
+                    if chat_task and not chat_task.done():
+                        chat_task.cancel()
+                        manager.stop()
+                        try:
+                            await chat_task
+                        except asyncio.CancelledError:
+                            pass
+                        chat_task = None
+
                 async def send_chat():
                     async for msg in manager.chat(content, files=files):
                         await websocket.send_text(json.dumps(msg.to_dict()))
 
                 chat_task = asyncio.create_task(send_chat())
-                try:
-                    await chat_task
-                except asyncio.CancelledError:
-                    logger.info("Chat cancelled for session: %s", session_id)
-                chat_task = None
+                chat_task.add_done_callback(on_chat_done)
 
             elif msg_type == "stop":
                 # 停止当前生成
-                if chat_task:
-                    chat_task.cancel()
-                    manager.stop()
-                    logger.info("Stop requested for session: %s", session_id)
+                async with chat_lock:
+                    if chat_task and not chat_task.done():
+                        chat_task.cancel()
+                        manager.stop()
+                        logger.info("Stop requested for session: %s", session_id)
+                        try:
+                            await chat_task
+                        except asyncio.CancelledError:
+                            pass
+                        chat_task = None
                 await websocket.send_text(json.dumps({"type": "stopped"}))
 
             elif msg_type == "clear_history":
@@ -131,6 +156,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.info("WebSocket disconnected: %s", session_id)
     except Exception as exc:
         logger.exception("WebSocket error for session %s: %s", session_id, exc)
+    finally:
+        if chat_task and not chat_task.done():
+            chat_task.cancel()
+            manager.stop()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
