@@ -35,7 +35,7 @@ jobs:
         run: |
           pip list | grep -E "(nanobot|litellm|anthropic|openai)"
           python -c "import nanobot; print('nanobot location:', nanobot.__file__)"
-          python -c "import litellm; print('litellm version:', litellm.__version__)"
+          python -c "import litellm, importlib.metadata; print('litellm version:', importlib.metadata.version('litellm'))"
 
       - name: Install dependencies
         run: npm ci
@@ -89,7 +89,7 @@ jobs:
         run: |
           pip list | findstr -E "(nanobot|litellm|anthropic|openai)"
           python -c "import nanobot; print('nanobot location:', nanobot.__file__)"
-          python -c "import litellm; print('litellm version:', litellm.__version__)"
+          python -c "import litellm, importlib.metadata; print('litellm version:', importlib.metadata.version('litellm'))"
 
       - name: Install dependencies
         run: npm ci
