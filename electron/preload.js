@@ -17,12 +17,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateTabState:   (state) => ipcRenderer.invoke('webview:updateState', state),
 
   // ── Commands pushed from main → renderer (AI bridge tab operations) ───────
-  onCmdNewTab:        (cb) => { ipcRenderer.on('cmd:newTab',        (_e, url)  => cb(url));  return () => ipcRenderer.removeAllListeners('cmd:newTab') },
-  onCmdCloseTab:      (cb) => { ipcRenderer.on('cmd:closeTab',      ()         => cb());     return () => ipcRenderer.removeAllListeners('cmd:closeTab') },
-  onCmdSwitchTab:     (cb) => { ipcRenderer.on('cmd:switchTab',     (_e, id)   => cb(id));   return () => ipcRenderer.removeAllListeners('cmd:switchTab') },
-  onCmdRestoreSession:(cb) => { ipcRenderer.on('cmd:restoreSession',(_e, tabs) => cb(tabs)); return () => ipcRenderer.removeAllListeners('cmd:restoreSession') },
-  onCmdNewSession:    (cb) => { ipcRenderer.on('cmd:newSession',    ()         => cb());     return () => ipcRenderer.removeAllListeners('cmd:newSession') },
-  onCmdAskAI:         (cb) => { ipcRenderer.on('cmd:askAI',         (_e, text) => cb(text)); return () => ipcRenderer.removeAllListeners('cmd:askAI') },
+  onCmdNewTab:        (cb) => { const handler = (_e, url)  => cb(url);  ipcRenderer.on('cmd:newTab',        handler); return () => ipcRenderer.removeListener('cmd:newTab', handler) },
+  onCmdCloseTab:      (cb) => { const handler = ()         => cb();     ipcRenderer.on('cmd:closeTab',      handler); return () => ipcRenderer.removeListener('cmd:closeTab', handler) },
+  onCmdSwitchTab:     (cb) => { const handler = (_e, id)   => cb(id);   ipcRenderer.on('cmd:switchTab',     handler); return () => ipcRenderer.removeListener('cmd:switchTab', handler) },
+  onCmdRestoreSession:(cb) => { const handler = (_e, tabs) => cb(tabs); ipcRenderer.on('cmd:restoreSession',handler); return () => ipcRenderer.removeListener('cmd:restoreSession', handler) },
+  onCmdNewSession:    (cb) => { const handler = ()         => cb();     ipcRenderer.on('cmd:newSession',    handler); return () => ipcRenderer.removeListener('cmd:newSession', handler) },
+  onCmdAskAI:         (cb) => { const handler = (_e, text) => cb(text); ipcRenderer.on('cmd:askAI',         handler); return () => ipcRenderer.removeListener('cmd:askAI', handler) },
 
   // ── Ad blocking ───────────────────────────────────────────────────────────
   getAdBlockEnabled: ()        => ipcRenderer.invoke('adblock:getEnabled'),

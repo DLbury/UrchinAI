@@ -16,7 +16,7 @@ export function useWebSocket(sessionId: string) {
   const connectingRef = useRef(false)
 
   const connect = useCallback(() => {
-    if (destroyedRef.current || connectingRef.current) return
+    if (!sessionId || destroyedRef.current || connectingRef.current) return
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
 
     connectingRef.current = true
@@ -110,8 +110,9 @@ export function useWebSocket(sessionId: string) {
     } else if (wsRef.current?.readyState === WebSocket.CONNECTING) {
       sendQueueRef.current.push(jsonStr)
     } else {
-      console.error('[ws] Cannot send, connection not open')
-      throw new Error('WebSocket not open')
+      // Closed or not created: reconnect and queue
+      sendQueueRef.current.push(jsonStr)
+      connect()
     }
   }, [])
 

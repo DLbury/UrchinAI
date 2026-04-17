@@ -1556,7 +1556,13 @@ function registerIpc() {
   // Renderer registers to receive WebSocket messages
   ipcMain.on('ws:listen', (e, sessionId) => {
     const conn = wsConnections.get(sessionId)
-    if (conn) conn.listeners.add(e.sender.id)
+    if (conn) {
+      conn.listeners.add(e.sender.id)
+      // Auto-remove listener when the renderer webContents is destroyed
+      const wc = e.sender
+      const cleanup = () => { conn.listeners.delete(wc.id); wc.removeListener('destroyed', cleanup) }
+      wc.once('destroyed', cleanup)
+    }
   })
 
   // ── DOM Element Picker ────────────────────────────────────────────────────
@@ -1978,17 +1984,12 @@ function attachRendererShortcuts(win) {
       event.preventDefault()
       win.webContents.send('shortcut:find')
     }
-    if (!isDev && input.control && input.shift && input.key.toLowerCase() === 'i') {
-      win.webContents.toggleDevTools()
-    }
-  })
-  if (isDev) {
-    win.webContents.on('before-input-event', (_, input) => {
-      if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+    if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+      if (isDev || !isDev) {
         win.webContents.toggleDevTools()
       }
-    })
-  }
+    }
+  })
 }
 
 function createWindow() {
@@ -2048,8 +2049,8 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('disable-in-process-stack-traces')
   // Fix /dev/shm permission issues
   app.commandLine.appendSwitch('disable-dev-shm-usage')
-  app.commandLine.appendSwitch('no-zygote')
-  app.commandLine.appendSwitch('disable-setuid-sandbox')
+  // Keep sandbox enabled: do not use no-zygote or disable-setuid-sandbox
+  // unless running in a container that lacks namespace sandbox support.
 }
 
 // Intercept new-window requests from ALL webviews → open as new tab instead of popup

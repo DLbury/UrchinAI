@@ -547,6 +547,8 @@ export default function App() {
   const [activeId, setActiveId] = useState<string>(INITIAL_TAB_ID)
   const activeIdRef = useRef<string>(INITIAL_TAB_ID)
   const webviewsRef = useRef<Map<string, WebviewElement>>(new Map())
+  const webviewListenersRef = useRef<Map<string, { event: string; handler: EventListener }[]>>(new Map())
+  const lastHistoryRef = useRef<{ url: string; title: string; time: number } | null>(null)
 
   // ── UI state ─────────────────────────────────────────────────────────────
   const [urlInput, setUrlInput]         = useState('')
@@ -737,45 +739,61 @@ export default function App() {
     if (webviewsRef.current.has(tabId)) return
     webviewsRef.current.set(tabId, el)
 
-    el.addEventListener('did-start-loading', () =>
-      setTabs(prev => prev.map(t => t.id===tabId ? {...t, isLoading:true} : t)))
+    const listeners: { event: string; handler: EventListener }[] = []
+    const add = (event: string, handler: EventListener) => {
+      el.addEventListener(event, handler)
+      listeners.push({ event, handler })
+    }
 
-    el.addEventListener('did-stop-loading', () => {
+    add('did-start-loading', () => {
+      setTabs(prev => prev.map(t => t.id===tabId ? {...t, isLoading:true} : t))
+      // Set background color BEFORE page loads to affect prefers-color-scheme
+      const isDark = webviewThemeRef.current === 'dark'
+      const bgColor = isDark ? '#111827' : '#ffffff'
+      try { el.setBackgroundColor?.(bgColor) } catch {}
+    })
+
+    add('did-stop-loading', () => {
       const url = el.getURL()
       // Only update url (address bar), never src — changing src causes a new navigation
       setTabs(prev => prev.map(t => t.id===tabId ? {...t, isLoading:false, url} : t))
       if (tabId === activeIdRef.current) {
         setUrlInput(url)
         notifyActiveWebview(el)
-        // Track history and refresh new-tab page data
+        // Track history and refresh new-tab page data (dedup rapid SPA navigations)
         const title = el.getTitle()
+        const now = Date.now()
         if (url && !url.startsWith('about:')) {
-          addHistory(url, title, '').catch(() => {})
+          const last = lastHistoryRef.current
+          if (!last || last.url !== url || now - last.time > 3000) {
+            lastHistoryRef.current = { url, title, time: now }
+            addHistory(url, title, '').catch(() => {})
+          }
           listHistory(50).then(setHistory).catch(() => {})
         }
       }
     })
 
-    el.addEventListener('page-title-updated', (e: any) =>
-      setTabs(prev => prev.map(t => t.id===tabId ? {...t, title: e.title} : t)))
+    add('page-title-updated', ((e: any) =>
+      setTabs(prev => prev.map(t => t.id===tabId ? {...t, title: e.title} : t))) as EventListener)
 
-    el.addEventListener('page-favicon-updated', (e: any) => {
+    add('page-favicon-updated', ((e: any) => {
       if (e.favicons?.[0]) setTabs(prev => prev.map(t => t.id===tabId ? {...t, favicon: e.favicons[0]} : t))
-    })
+    }) as EventListener)
 
-    el.addEventListener('did-navigate', (e: any) => {
+    add('did-navigate', ((e: any) => {
       setTabs(prev => prev.map(t => t.id===tabId ? {...t, url: e.url} : t))
       if (tabId === activeIdRef.current) setUrlInput(e.url)
-    })
+    }) as EventListener)
 
-    el.addEventListener('did-navigate-in-page', (e: any) => {
+    add('did-navigate-in-page', ((e: any) => {
       setTabs(prev => prev.map(t => t.id===tabId ? {...t, url: e.url} : t))
       if (tabId === activeIdRef.current) setUrlInput(e.url)
-    })
+    }) as EventListener)
 
-    el.addEventListener('new-window', (e: any) => createTabRef.current(e.url))
+    add('new-window', ((e: any) => createTabRef.current(e.url)) as EventListener)
 
-    el.addEventListener('context-menu', (e: any) => {
+    add('context-menu', ((e: any) => {
       eAPI?.showContextMenu({
         x: e.x, y: e.y,
         linkURL: e.params?.linkURL || '',
@@ -785,22 +803,13 @@ export default function App() {
         selectionText: e.params?.selectionText || '',
         isEditable: e.params?.isEditable || false,
       })
-    })
+    }) as EventListener)
 
-    el.addEventListener('did-start-loading', () => {
-      // Set background color BEFORE page loads to affect prefers-color-scheme
-      const isDark = webviewThemeRef.current === 'dark'
-      const bgColor = isDark ? '#111827' : '#ffffff'
-      try {
-        el.setBackgroundColor?.(bgColor)
-      } catch (e) {
-        // Ignore
-      }
-    })
-
-    el.addEventListener('dom-ready', () => {
+    add('dom-ready', () => {
       if (tabId === activeIdRef.current) notifyActiveWebview(el)
     })
+
+    webviewListenersRef.current.set(tabId, listeners)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notifyActiveWebview])
 
@@ -829,7 +838,14 @@ export default function App() {
       if (activeIdRef.current === id) setActiveId(remaining[remaining.length - 1].id)
       return remaining
     })
+    // Remove event listeners to avoid leaks
+    const wv = webviewsRef.current.get(id)
+    const listeners = webviewListenersRef.current.get(id)
+    if (wv && listeners) {
+      listeners.forEach(({ event, handler }) => wv.removeEventListener(event, handler))
+    }
     webviewsRef.current.delete(id)
+    webviewListenersRef.current.delete(id)
   }, [])
 
   const switchTab = useCallback((id: string) => {
@@ -975,7 +991,11 @@ export default function App() {
         }
         tokenBufferRef.current = ''
         reasoningBufferRef.current = ''
-        setChatMessagesBySession(prev => ({ ...prev, [currentChatSessionId]: [] }))
+        setChatMessagesBySession(prev => {
+          const nextMsgs = { ...prev, [currentChatSessionId]: [] }
+          persistSessions(chatSessions, nextMsgs, currentChatSessionId, true)
+          return nextMsgs
+        })
       }
     })
 
@@ -1047,6 +1067,8 @@ export default function App() {
       tabList.forEach(t => createTabCore(t.url))
     })
     const off5 = eAPI.onCmdNewSession(() => {
+      webviewsRef.current.clear()
+      webviewListenersRef.current.clear()
       setTabs([{ id: INITIAL_TAB_ID, src: 'about:blank', url: '', title: '新标签页', isLoading: false, favicon: null }])
       setActiveId(INITIAL_TAB_ID)
     })
