@@ -589,6 +589,9 @@ export default function App() {
   const tokenBufferRef = useRef('')
   const reasoningBufferRef = useRef('')
   const chatInitRef = useRef(false)
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingPersistRef = useRef<{ sessions: ChatSession[]; msgs: Record<string, ChatMessage[]>; currentId: string } | null>(null)
+  const flushRafRef = useRef<number | null>(null)
 
   // Load chat sessions from backend
   const loadChatSessions = useCallback(() => {
@@ -617,9 +620,24 @@ export default function App() {
     })
   }, [])
 
-  const persistSessions = useCallback((nextSessions: ChatSession[], nextMsgs: Record<string, ChatMessage[]>, nextCurrentId: string) => {
-    const fullSessions = nextSessions.map(s => ({ ...s, messages: nextMsgs[s.id] || [] }))
-    saveChatSessions(fullSessions, nextCurrentId).catch(() => {})
+  const persistSessions = useCallback((nextSessions: ChatSession[], nextMsgs: Record<string, ChatMessage[]>, nextCurrentId: string, immediate = false) => {
+    pendingPersistRef.current = { sessions: nextSessions, msgs: nextMsgs, currentId: nextCurrentId }
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current)
+      persistTimerRef.current = null
+    }
+    const exec = () => {
+      const pending = pendingPersistRef.current
+      if (!pending) return
+      const fullSessions = pending.sessions.map(s => ({ ...s, messages: pending.msgs[s.id] || [] }))
+      saveChatSessions(fullSessions, pending.currentId).catch(() => {})
+      pendingPersistRef.current = null
+    }
+    if (immediate) {
+      exec()
+    } else {
+      persistTimerRef.current = setTimeout(exec, 1500)
+    }
   }, [])
 
   const handleMessagesChange = useCallback((nextMsgs: Record<string, ChatMessage[]>) => {
@@ -634,13 +652,13 @@ export default function App() {
     setChatSessions(nextSessions)
     setChatMessagesBySession(nextMsgs)
     setCurrentChatSessionId(newSession.id)
-    persistSessions(nextSessions, nextMsgs, newSession.id)
+    persistSessions(nextSessions, nextMsgs, newSession.id, true)
   }, [chatSessions, chatMessagesBySession, persistSessions])
 
   const handleRenameSession = useCallback((id: string, name: string) => {
     const nextSessions = chatSessions.map(s => s.id === id ? { ...s, name } : s)
     setChatSessions(nextSessions)
-    persistSessions(nextSessions, chatMessagesBySession, currentChatSessionId)
+    persistSessions(nextSessions, chatMessagesBySession, currentChatSessionId, true)
   }, [chatSessions, chatMessagesBySession, currentChatSessionId, persistSessions])
 
   const handleDeleteChatSession = useCallback((id: string) => {
@@ -654,7 +672,7 @@ export default function App() {
     if (currentChatSessionId === id) {
       setCurrentChatSessionId(filtered[0].id)
     }
-    persistSessions(filtered, nextMsgs, nextCurrentId)
+    persistSessions(filtered, nextMsgs, nextCurrentId, true)
   }, [chatSessions, chatMessagesBySession, currentChatSessionId, persistSessions])
 
   useEffect(() => {
@@ -857,7 +875,11 @@ export default function App() {
   const ws = useWebSocket(currentChatSessionId)
 
   useEffect(() => {
-    const flush = () => {
+    const doFlush = () => {
+      if (flushRafRef.current) {
+        cancelAnimationFrame(flushRafRef.current)
+        flushRafRef.current = null
+      }
       if (!tokenBufferRef.current && !reasoningBufferRef.current) return
       const contentChunk = tokenBufferRef.current
       const reasoningChunk = reasoningBufferRef.current
@@ -877,16 +899,23 @@ export default function App() {
         })
       }))
     }
+    const scheduleFlush = () => {
+      if (flushRafRef.current) return
+      flushRafRef.current = requestAnimationFrame(() => {
+        flushRafRef.current = null
+        doFlush()
+      })
+    }
 
     ws.onMessage((msg: WSMessage) => {
       if (msg.type === 'token') {
         tokenBufferRef.current += msg.content || ''
-        flush()
+        scheduleFlush()
       } else if (msg.type === 'reasoning') {
         reasoningBufferRef.current += msg.content || ''
-        flush()
+        scheduleFlush()
       } else if (msg.type === 'tool_call') {
-        flush()
+        doFlush()
         setAgentOperating(true)
         const toolCall = { id: msg.call_id || Math.random().toString(36).slice(2), name: msg.name || '', args: msg.args || {}, status: 'running' as const }
         if (toolCall.name === 'browser_navigate' && toolCall.args.url) {
@@ -900,7 +929,7 @@ export default function App() {
           }))
         }
       } else if (msg.type === 'tool_result') {
-        flush()
+        doFlush()
         const callId = msg.call_id || ''
         const msgId = pendingToolsRef.current.get(callId)
         if (msgId) {
@@ -913,13 +942,13 @@ export default function App() {
           }))
         }
       } else if (msg.type === 'done') {
-        flush()
+        doFlush()
         setAgentOperating(false)
         setIsStreaming(false)
         streamingMsgIdRef.current = null
         pendingToolsRef.current.clear()
       } else if (msg.type === 'error') {
-        flush()
+        doFlush()
         setAgentOperating(false)
         setIsStreaming(false)
         streamingMsgIdRef.current = null
@@ -929,17 +958,28 @@ export default function App() {
           [currentChatSessionId]: [...(prev[currentChatSessionId] || []), { id: `err-${Date.now()}`, role: 'assistant', content: `错误：${msg.content || '未知错误'}`, createdAt: Date.now() }]
         }))
       } else if (msg.type === 'stopped') {
-        flush()
+        doFlush()
         setAgentOperating(false)
         setIsStreaming(false)
         streamingMsgIdRef.current = null
         pendingToolsRef.current.clear()
       } else if (msg.type === 'history_cleared') {
+        if (flushRafRef.current) {
+          cancelAnimationFrame(flushRafRef.current)
+          flushRafRef.current = null
+        }
         tokenBufferRef.current = ''
         reasoningBufferRef.current = ''
         setChatMessagesBySession(prev => ({ ...prev, [currentChatSessionId]: [] }))
       }
     })
+
+    return () => {
+      if (flushRafRef.current) {
+        cancelAnimationFrame(flushRafRef.current)
+        flushRafRef.current = null
+      }
+    }
   }, [ws.onMessage, currentChatSessionId, navigate])
 
   const handleStartStreaming = useCallback((msgId: string) => {

@@ -796,7 +796,7 @@ export default function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
 
-  useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
+  useEffect(() => { scrollToBottom() }, [messages.length, scrollToBottom])
 
   const sendMessage = useCallback((overrideText?: string) => {
     const text = (overrideText ?? input).trim()
@@ -1344,7 +1344,7 @@ export default function ChatPanel({
               </div>
             ) : (
               <button onClick={() => sendMessage(undefined)}
-                disabled={!input.trim() || status !== 'connected'}
+                disabled={!input.trim() || wsStatus !== 'connected'}
                 className="shrink-0 px-4 py-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-700 hover:from-brand-500 hover:to-brand-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150 shadow-sm hover:shadow-md hover:shadow-brand-500/20 active:scale-95 disabled:hover:shadow-none flex items-center gap-1.5"
               >
                 <Send size={14} />

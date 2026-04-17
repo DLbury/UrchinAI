@@ -93,13 +93,31 @@ export function useWebSocket(sessionId: string) {
     }
   }, [sessionId, connect])
 
-  const send = useCallback((data: unknown) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const jsonStr = JSON.stringify(data)
-      console.log('[ws] sending:', jsonStr.substring(0, 200) + (jsonStr.length > 200 ? '...' : ''))
-      wsRef.current.send(jsonStr)
+  const sendQueueRef = useRef<string[]>([])
+
+  const drainQueue = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && sendQueueRef.current.length > 0) {
+      const batch = sendQueueRef.current.splice(0, sendQueueRef.current.length)
+      batch.forEach(jsonStr => wsRef.current?.send(jsonStr))
     }
   }, [])
+
+  const send = useCallback((data: unknown) => {
+    const jsonStr = JSON.stringify(data)
+    console.log('[ws] sending:', jsonStr.substring(0, 200) + (jsonStr.length > 200 ? '...' : ''))
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(jsonStr)
+    } else if (wsRef.current?.readyState === WebSocket.CONNECTING) {
+      sendQueueRef.current.push(jsonStr)
+    } else {
+      console.error('[ws] Cannot send, connection not open')
+      throw new Error('WebSocket not open')
+    }
+  }, [])
+
+  useEffect(() => {
+    drainQueue()
+  }, [status, drainQueue])
 
   const onMessage = useCallback((handler: (msg: WSMessage) => void) => {
     onMessageRef.current = handler
