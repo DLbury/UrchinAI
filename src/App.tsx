@@ -12,12 +12,13 @@ import { v4 as uuidv4 } from 'uuid'
 import ChatPanel from './components/ChatPanel'
 import SettingsModal from './components/SettingsModal'
 import NewTabPage from './components/NewTabPage'
-import type { ChatMessage, ChatSession } from './types'
+import type { ChatMessage, ChatSession, WSMessage } from './types'
 import {
   listBookmarks, addBookmark, removeBookmark, updateBookmarkCategory,
   listHistory, addHistory, clearHistory, listCategories,
   listChatSessions, saveChatSessions, getSearchEngine,
 } from './api/client'
+import { useWebSocket } from './hooks/useWebSocket'
 
 // ── Electron IPC bridge ──────────────────────────────────────────────────────
 type ElectronAPI = {
@@ -37,6 +38,7 @@ type ElectronAPI = {
   restoreSession:      (id: string)   => Promise<{ ok: boolean; count: number }>
   newSession:          ()             => Promise<{ ok: boolean }>
   onCmdNewSession:     (cb: () => void) => () => void
+  onCmdAskAI:          (cb: (text: string) => void) => () => void
   openExternal:        (url: string)  => Promise<void>
   onBackendReady:      (cb: () => void) => () => void
   getFXEnabled:        () => Promise<boolean>
@@ -581,6 +583,11 @@ export default function App() {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string>('')
   const [chatMessagesBySession, setChatMessagesBySession] = useState<Record<string, ChatMessage[]>>({})
+  const [isStreaming, setIsStreaming] = useState(false)
+  const streamingMsgIdRef = useRef<string | null>(null)
+  const pendingToolsRef = useRef<Map<string, string>>(new Map())
+  const tokenBufferRef = useRef('')
+  const reasoningBufferRef = useRef('')
   const chatInitRef = useRef(false)
 
   // Load chat sessions from backend
@@ -620,6 +627,36 @@ export default function App() {
     persistSessions(chatSessions, nextMsgs, currentChatSessionId)
   }, [chatSessions, currentChatSessionId, persistSessions])
 
+  const handleNewSession = useCallback(() => {
+    const newSession = { id: uuidv4(), name: `会话 ${chatSessions.length + 1}`, createdAt: Date.now(), messages: [] }
+    const nextSessions = [newSession, ...chatSessions]
+    const nextMsgs = { ...chatMessagesBySession, [newSession.id]: [] }
+    setChatSessions(nextSessions)
+    setChatMessagesBySession(nextMsgs)
+    setCurrentChatSessionId(newSession.id)
+    persistSessions(nextSessions, nextMsgs, newSession.id)
+  }, [chatSessions, chatMessagesBySession, persistSessions])
+
+  const handleRenameSession = useCallback((id: string, name: string) => {
+    const nextSessions = chatSessions.map(s => s.id === id ? { ...s, name } : s)
+    setChatSessions(nextSessions)
+    persistSessions(nextSessions, chatMessagesBySession, currentChatSessionId)
+  }, [chatSessions, chatMessagesBySession, currentChatSessionId, persistSessions])
+
+  const handleDeleteChatSession = useCallback((id: string) => {
+    if (chatSessions.length <= 1) return
+    const filtered = chatSessions.filter(s => s.id !== id)
+    const nextMsgs = { ...chatMessagesBySession }
+    delete nextMsgs[id]
+    const nextCurrentId = currentChatSessionId === id ? filtered[0].id : currentChatSessionId
+    setChatSessions(filtered)
+    setChatMessagesBySession(nextMsgs)
+    if (currentChatSessionId === id) {
+      setCurrentChatSessionId(filtered[0].id)
+    }
+    persistSessions(filtered, nextMsgs, nextCurrentId)
+  }, [chatSessions, chatMessagesBySession, currentChatSessionId, persistSessions])
+
   useEffect(() => {
     if (chatInitRef.current) return
     chatInitRef.current = true
@@ -635,6 +672,7 @@ export default function App() {
 
   const urlInputRef = useRef<HTMLInputElement>(null)
   const chatSendRef = useRef<((text:string)=>void)|null>(null)
+  const chatInputRef = useRef<((text:string)=>void)|null>(null)
 
   const activeTab  = tabs.find(t => t.id === activeId) ?? null
   const currentUrl = activeTab?.url ?? ''
@@ -708,7 +746,7 @@ export default function App() {
       if (tabId === activeIdRef.current) setUrlInput(e.url)
     })
 
-    el.addEventListener('new-window', (e: any) => createTab(e.url))
+    el.addEventListener('new-window', (e: any) => createTabRef.current(e.url))
 
     el.addEventListener('context-menu', (e: any) => {
       eAPI?.showContextMenu({
@@ -740,12 +778,22 @@ export default function App() {
   }, [notifyActiveWebview])
 
   // ── Tab operations ────────────────────────────────────────────────────────
-  const createTab = useCallback((url = '') => {
+  const createTabCore = useCallback((url = '') => {
     const id = uuidv4()
     setTabs(prev => [...prev, { id, src: url || 'about:blank', url, title: '新标签页', isLoading: false, favicon: null }])
     setActiveId(id)
     return id
   }, [])
+
+  const createTab = useCallback((url = '') => {
+    const msgs = chatMessagesBySession[currentChatSessionId]
+    if (msgs && msgs.length > 0) {
+      handleNewSession()
+    }
+    return createTabCore(url)
+  }, [chatMessagesBySession, currentChatSessionId, handleNewSession, createTabCore])
+  const createTabRef = useRef(createTab)
+  createTabRef.current = createTab
 
   const closeTab = useCallback((id: string) => {
     setTabs(prev => {
@@ -805,6 +853,105 @@ export default function App() {
     }
   }, [searchEngine])
 
+  // ── Shared WebSocket for both ChatPanel and NewTabPage ─────────────────────
+  const ws = useWebSocket(currentChatSessionId)
+
+  useEffect(() => {
+    const flush = () => {
+      if (!tokenBufferRef.current && !reasoningBufferRef.current) return
+      const contentChunk = tokenBufferRef.current
+      const reasoningChunk = reasoningBufferRef.current
+      tokenBufferRef.current = ''
+      reasoningBufferRef.current = ''
+      const msgId = streamingMsgIdRef.current
+      if (!msgId) return
+      setChatMessagesBySession(prev => ({
+        ...prev,
+        [currentChatSessionId]: (prev[currentChatSessionId] || []).map(m => {
+          if (m.id !== msgId) return m
+          return {
+            ...m,
+            ...(contentChunk && { content: (m.content || '') + contentChunk }),
+            ...(reasoningChunk && { reasoning: (m.reasoning || '') + reasoningChunk }),
+          }
+        })
+      }))
+    }
+
+    ws.onMessage((msg: WSMessage) => {
+      if (msg.type === 'token') {
+        tokenBufferRef.current += msg.content || ''
+        flush()
+      } else if (msg.type === 'reasoning') {
+        reasoningBufferRef.current += msg.content || ''
+        flush()
+      } else if (msg.type === 'tool_call') {
+        flush()
+        setAgentOperating(true)
+        const toolCall = { id: msg.call_id || Math.random().toString(36).slice(2), name: msg.name || '', args: msg.args || {}, status: 'running' as const }
+        if (toolCall.name === 'browser_navigate' && toolCall.args.url) {
+          navigate(toolCall.args.url as string)
+        }
+        if (streamingMsgIdRef.current) {
+          pendingToolsRef.current.set(toolCall.id, streamingMsgIdRef.current)
+          setChatMessagesBySession(prev => ({
+            ...prev,
+            [currentChatSessionId]: (prev[currentChatSessionId] || []).map(m => m.id === streamingMsgIdRef.current ? { ...m, toolCalls: [...(m.toolCalls || []), toolCall] } : m)
+          }))
+        }
+      } else if (msg.type === 'tool_result') {
+        flush()
+        const callId = msg.call_id || ''
+        const msgId = pendingToolsRef.current.get(callId)
+        if (msgId) {
+          setChatMessagesBySession(prev => ({
+            ...prev,
+            [currentChatSessionId]: (prev[currentChatSessionId] || []).map(m => m.id === msgId ? {
+              ...m,
+              toolCalls: m.toolCalls?.map(t => t.id === callId ? { ...t, result: String(msg.content || ''), status: 'done' as const } : t)
+            } : m)
+          }))
+        }
+      } else if (msg.type === 'done') {
+        flush()
+        setAgentOperating(false)
+        setIsStreaming(false)
+        streamingMsgIdRef.current = null
+        pendingToolsRef.current.clear()
+      } else if (msg.type === 'error') {
+        flush()
+        setAgentOperating(false)
+        setIsStreaming(false)
+        streamingMsgIdRef.current = null
+        pendingToolsRef.current.clear()
+        setChatMessagesBySession(prev => ({
+          ...prev,
+          [currentChatSessionId]: [...(prev[currentChatSessionId] || []), { id: `err-${Date.now()}`, role: 'assistant', content: `错误：${msg.content || '未知错误'}`, createdAt: Date.now() }]
+        }))
+      } else if (msg.type === 'stopped') {
+        flush()
+        setAgentOperating(false)
+        setIsStreaming(false)
+        streamingMsgIdRef.current = null
+        pendingToolsRef.current.clear()
+      } else if (msg.type === 'history_cleared') {
+        tokenBufferRef.current = ''
+        reasoningBufferRef.current = ''
+        setChatMessagesBySession(prev => ({ ...prev, [currentChatSessionId]: [] }))
+      }
+    })
+  }, [ws.onMessage, currentChatSessionId, navigate])
+
+  const handleStartStreaming = useCallback((msgId: string) => {
+    streamingMsgIdRef.current = msgId
+    setIsStreaming(true)
+  }, [])
+
+  const handleStopStreaming = useCallback(() => {
+    streamingMsgIdRef.current = null
+    setIsStreaming(false)
+  }, [])
+
   // ── Reorder tabs (drag-to-sort within tab bar) ───────────────────────────
   const reorderTab = useCallback((draggedId: string, targetId: string) => {
     setTabs(prev => {
@@ -852,13 +999,21 @@ export default function App() {
     const off4 = eAPI.onCmdRestoreSession(tabList => {
       setTabs([])
       webviewsRef.current.clear()
-      tabList.forEach(t => createTab(t.url))
+      tabList.forEach(t => createTabCore(t.url))
     })
     const off5 = eAPI.onCmdNewSession(() => {
       setTabs([{ id: INITIAL_TAB_ID, src: 'about:blank', url: '', title: '新标签页', isLoading: false, favicon: null }])
       setActiveId(INITIAL_TAB_ID)
     })
-    return () => { off1(); off2(); off3(); off4(); off5() }
+    const off6 = eAPI.onCmdAskAI((text) => {
+      if (!text) return
+      setChatOpen(true)
+      // 使用 setTimeout 确保 ChatPanel 已经展开（如果之前是折叠的）
+      setTimeout(() => {
+        chatInputRef.current?.(text)
+      }, 50)
+    })
+    return () => { off1(); off2(); off3(); off4(); off5(); off6() }
   }, [createTab, closeTab, switchTab])
 
   // ── Find in page (Ctrl+F) ────────────────────────────────────────────────
@@ -973,8 +1128,8 @@ export default function App() {
     }
   }
   // ── Settings (same — just toggle, no hide/show needed) ───────────────────
-  const openSettings  = () => { closeAllPanels(); setSettingsOpen(true) }
-  const closeSettings = () => setSettingsOpen(false)
+  const openSettings  = useCallback(() => { closeAllPanels(); setSettingsOpen(true) }, [])
+  const closeSettings = useCallback(() => setSettingsOpen(false), [])
 
   // ── Session management ─────────────────────────────────────────────────────
   const loadSavedSessions = async () => {
@@ -1017,7 +1172,6 @@ export default function App() {
   }
 
   const handleClearHistory = async () => { await clearHistory().catch(() => {}); setHistory([]) }
-  const handleAgentNavigate = useCallback((url: string) => navigate(url), [navigate])
 
   // ── Chat panel resize ─────────────────────────────────────────────────────
   const chatResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
@@ -1219,49 +1373,27 @@ export default function App() {
           })}
 
           {/* New-tab page — rendered AFTER webviews so it sits on top in z-order.
-              Only shown when the active tab has no real URL yet. */}
-          {(!activeTab?.url || activeTab.url === 'about:blank') && (
-            <div className="absolute inset-0 z-10">
-              <NewTabPage
-                onNavigate={navigate}
-                bookmarks={bookmarks}
-                history={history}
-                sessions={chatSessions}
-                currentSessionId={currentChatSessionId}
-                messagesBySession={chatMessagesBySession}
-                onSwitchSession={setCurrentChatSessionId}
-                onNewSession={() => {
-                  const newSession = { id: uuidv4(), name: `会话 ${chatSessions.length + 1}`, createdAt: Date.now(), messages: [] }
-                  const nextSessions = [...chatSessions, newSession]
-                  const nextMsgs = { ...chatMessagesBySession, [newSession.id]: [] }
-                  setChatSessions(nextSessions)
-                  setChatMessagesBySession(nextMsgs)
-                  setCurrentChatSessionId(newSession.id)
-                  persistSessions(nextSessions, nextMsgs, newSession.id)
-                }}
-                onRenameSession={(id, name) => {
-                  const nextSessions = chatSessions.map(s => s.id === id ? { ...s, name } : s)
-                  setChatSessions(nextSessions)
-                  persistSessions(nextSessions, chatMessagesBySession, currentChatSessionId)
-                }}
-                onDeleteSession={(id) => {
-                  if (chatSessions.length <= 1) return
-                  const filtered = chatSessions.filter(s => s.id !== id)
-                  const nextMsgs = { ...chatMessagesBySession }
-                  delete nextMsgs[id]
-                  const nextCurrentId = currentChatSessionId === id ? filtered[0].id : currentChatSessionId
-                  setChatSessions(filtered)
-                  setChatMessagesBySession(nextMsgs)
-                  if (currentChatSessionId === id) {
-                    setCurrentChatSessionId(filtered[0].id)
-                  }
-                  persistSessions(filtered, nextMsgs, nextCurrentId)
-                }}
-                onMessagesChange={handleMessagesChange}
-                onAgentOperatingChange={setAgentOperating}
-              />
-            </div>
-          )}
+              Always mounted (hidden when not on blank page) so its WebSocket stays alive. */}
+          <div className={`absolute inset-0 z-10 ${isBlankPage ? 'visible opacity-100' : 'invisible opacity-0 pointer-events-none'}`}>
+            <NewTabPage
+              onNavigate={navigate}
+              bookmarks={bookmarks}
+              history={history}
+              sessions={chatSessions}
+              currentSessionId={currentChatSessionId}
+              messagesBySession={chatMessagesBySession}
+              onSwitchSession={setCurrentChatSessionId}
+              onNewSession={handleNewSession}
+              onRenameSession={handleRenameSession}
+              onDeleteSession={handleDeleteChatSession}
+              onMessagesChange={handleMessagesChange}
+              isStreaming={isStreaming}
+              onStartStreaming={handleStartStreaming}
+              onStopStreaming={handleStopStreaming}
+              send={ws.send}
+              wsStatus={ws.status}
+            />
+          </div>
 
           {/* Find in page (Ctrl+F) search box */}
           {findOpen && (
@@ -1335,45 +1467,26 @@ export default function App() {
               <div className="w-0.5 h-4 rounded-full bg-nb-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
           )}
-          <div className={`h-full ${isBlankPage ? 'hidden' : 'block'}`}>
+          <div className={`h-full ${isBlankPage ? 'invisible opacity-0' : 'visible opacity-100'}`}>
             <ChatPanel
               sessionId={currentChatSessionId}
               sessions={chatSessions}
               currentSessionId={currentChatSessionId}
               messagesBySession={chatMessagesBySession}
               onSwitchSession={setCurrentChatSessionId}
-              onNewSession={() => {
-                const newSession = { id: uuidv4(), name: `会话 ${chatSessions.length + 1}`, createdAt: Date.now(), messages: [] }
-                const nextSessions = [...chatSessions, newSession]
-                const nextMsgs = { ...chatMessagesBySession, [newSession.id]: [] }
-                setChatSessions(nextSessions)
-                setChatMessagesBySession(nextMsgs)
-                setCurrentChatSessionId(newSession.id)
-                persistSessions(nextSessions, nextMsgs, newSession.id)
-              }}
-              onRenameSession={(id, name) => {
-                const nextSessions = chatSessions.map(s => s.id === id ? { ...s, name } : s)
-                setChatSessions(nextSessions)
-                persistSessions(nextSessions, chatMessagesBySession, currentChatSessionId)
-              }}
-              onDeleteSession={(id) => {
-                if (chatSessions.length <= 1) return
-                const filtered = chatSessions.filter(s => s.id !== id)
-                const nextMsgs = { ...chatMessagesBySession }
-                delete nextMsgs[id]
-                const nextCurrentId = currentChatSessionId === id ? filtered[0].id : currentChatSessionId
-                setChatSessions(filtered)
-                setChatMessagesBySession(nextMsgs)
-                if (currentChatSessionId === id) {
-                  setCurrentChatSessionId(filtered[0].id)
-                }
-                persistSessions(filtered, nextMsgs, nextCurrentId)
-              }}
+              onNewSession={handleNewSession}
+              onRenameSession={handleRenameSession}
+              onDeleteSession={handleDeleteChatSession}
               onMessagesChange={handleMessagesChange}
-              onAgentNavigate={handleAgentNavigate}
-              onAgentOperatingChange={setAgentOperating}
               sendRef={chatSendRef}
+              externalInputRef={chatInputRef}
               onOpenSettings={openSettings}
+              isStreaming={isStreaming}
+              onStartStreaming={handleStartStreaming}
+              onStopStreaming={handleStopStreaming}
+              send={ws.send}
+              wsStatus={ws.status}
+              reconnectWS={ws.reconnect}
             />
           </div>
         </div>
@@ -1381,7 +1494,7 @@ export default function App() {
 
       {/* ── Overlays (z-50, naturally above webview) ─────────────────── */}
       {/* No hideBrowser/showBrowser needed — webview is an HTML element */}
-      <SettingsModal open={settingsOpen} onClose={closeSettings} />
+      {settingsOpen && <SettingsModal open onClose={closeSettings} />}
     </div>
   )
 }

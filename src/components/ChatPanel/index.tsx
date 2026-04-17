@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, Trash2, Bot, User, ChevronDown, Terminal, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings, Copy, Square, Edit2, Plus, X, Paperclip, Brain } from 'lucide-react'
-import { useWebSocket } from '../../hooks/useWebSocket'
+import { Send, Trash2, Bot, User, ChevronDown, XCircle, Loader2, Wifi, WifiOff, Zap, ChevronUp, Check, Settings, Copy, Square, Edit2, Plus, X, Paperclip } from 'lucide-react'
 import MarkdownRenderer from '../common/MarkdownRenderer'
 import { listScripts, getConfig, updateModel, getProviders, createScript, updateScript, deleteScript } from '../../api/client'
-import type { ChatMessage, ChatSession, ToolCall, WSMessage } from '../../types'
+import type { ChatMessage, ChatSession } from '../../types'
 import { MessageAttachments, InputAttachments } from '../AttachmentsAdapter'
 import { ToolCallsGroup } from '../ToolCallsGroup'
 import {
@@ -22,16 +21,22 @@ interface ChatPanelProps {
   onNewSession: () => void
   onRenameSession: (id: string, name: string) => void
   onDeleteSession: (id: string) => void
-  onAgentNavigate?: (url: string) => void
   /** Ref that parent can use to programmatically send a message */
   sendRef?: React.MutableRefObject<((text: string) => void) | null>
+  /** Ref that parent can use to set input text */
+  externalInputRef?: React.MutableRefObject<((text: string) => void) | null>
   onOpenSettings?: () => void
   /** Called when messages change (for persistence) */
   onMessagesChange?: (messagesBySession: Record<string, ChatMessage[]>) => void
-  /** Called when agent starts or stops operating the browser */
-  onAgentOperatingChange?: (operating: boolean) => void
   /** Legacy: called when sessions or messages change */
   onSessionsChange?: (sessions: ChatSession[], messagesBySession: Record<string, ChatMessage[]>) => void
+  /** Shared WebSocket props from parent */
+  send: (data: unknown) => void
+  wsStatus: 'connecting' | 'connected' | 'disconnected' | 'error'
+  reconnectWS: () => void
+  isStreaming: boolean
+  onStartStreaming: (msgId: string) => void
+  onStopStreaming: () => void
 }
 
 // 每个服务商的推荐模型
@@ -127,7 +132,7 @@ function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: b
   }
 
   // 判断是否正在推理中
-  const isReasoningStreaming = isStreaming && msg.reasoning && !msg.content
+  const isReasoningStreaming = Boolean(isStreaming && msg.reasoning && !msg.content)
 
   return (
     <div className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -592,24 +597,20 @@ export default function ChatPanel({
   onNewSession,
   onRenameSession,
   onDeleteSession,
-  onAgentNavigate,
   sendRef,
+  externalInputRef,
   onOpenSettings,
   onMessagesChange,
-  onAgentOperatingChange
+  send,
+  wsStatus,
+  reconnectWS,
+  isStreaming,
+  onStartStreaming,
+  onStopStreaming,
 }: ChatPanelProps) {
   const { t } = useTranslation()
-  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>(propMessagesBySession || {})
-  const messages = messagesBySession[sessionId] ?? []
-
-  // Sync local messages with parent when props change (e.g. from NewTabPage)
-  useEffect(() => {
-    if (propMessagesBySession) {
-      setMessagesBySession(propMessagesBySession)
-    }
-  }, [propMessagesBySession])
+  const messages = propMessagesBySession?.[sessionId] ?? []
   const [input, setInput] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
   // 使用默认脚本确保立即显示，后端就绪后尝试更新
   const [scripts, setScripts] = useState<Script[]>(DEFAULT_SCRIPTS)
   const [currentModel, setCurrentModel] = useState('')
@@ -625,17 +626,10 @@ export default function ChatPanel({
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const streamingMsgIdRef = useRef<string | null>(null)
-  const pendingToolsRef = useRef<Map<string, string>>(new Map())
-  // Token burst smoothing: backend may emit many tokens very quickly; React 18 can batch
-  // state updates and it looks "non-streaming". Buffer tokens and flush at most once/frame.
-  const tokenBufferRef = useRef('')
-  const reasoningBufferRef = useRef('')  // 推理过程缓冲区
-  const flushRafRef = useRef<number | null>(null)
   const scriptsScrollRef = useRef<HTMLDivElement>(null)
   const sessionPanelRef = useRef<HTMLDivElement>(null)
-
-  const { send, onMessage, status, reconnect } = useWebSocket(sessionId)
+  const messagesRef = useRef(propMessagesBySession || {})
+  useEffect(() => { messagesRef.current = propMessagesBySession || {} }, [propMessagesBySession])
 
   // 加载配置（可重复调用，用于后端就绪后重新加载）
   const loadConfig = useCallback(async () => {
@@ -679,18 +673,18 @@ export default function ChatPanel({
 
     const unsubscribe = eAPI.onDomPicked((data: any) => {
       setIsDomPicking(false)
+      // data 为 null 时表示右键取消了选取
+      if (!data) return
       // 添加选中的元素到列表
-      if (data) {
-        setPickedElements(prev => {
-          const newElement = {
-            id: `dom-${Date.now()}`,
-            tagName: data.tagName,
-            text: data.text?.slice(0, 30) || '',
-            selector: data.selector
-          }
-          return [...prev, newElement]
-        })
-      }
+      setPickedElements(prev => {
+        const newElement = {
+          id: `dom-${Date.now()}`,
+          tagName: data.tagName,
+          text: data.text?.slice(0, 30) || '',
+          selector: data.selector
+        }
+        return [...prev, newElement]
+      })
     })
 
     return () => unsubscribe()
@@ -739,15 +733,6 @@ export default function ChatPanel({
     setPickedElements(prev => prev.filter(el => el.id !== id))
   }
 
-  // 清除所有选中元素时同步清除网页上的 badges
-  const clearAllPickedElements = async () => {
-    const eAPI = (window as any).electronAPI
-    if (eAPI?.clearAllPickedBadges) {
-      await eAPI.clearAllPickedBadges()
-    }
-    setPickedElements([])
-  }
-
   // 开发环境：立即加载；生产环境：等待 backend:ready
   useEffect(() => {
     const eAPI = (window as any).electronAPI
@@ -776,21 +761,6 @@ export default function ChatPanel({
     }
   }, [loadConfig, loadScripts])
 
-  // ── Persist messages to parent ────────────────────────────────────────────
-  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Debounced persist whenever messages change
-  useEffect(() => {
-    if (!onMessagesChange) return
-    if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
-    persistTimerRef.current = setTimeout(() => {
-      onMessagesChange(messagesBySession)
-    }, 800)
-    return () => {
-      if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
-    }
-  }, [messagesBySession, onMessagesChange])
-
   // 脚本栏横向滚动：使用非被动事件监听器避免 preventDefault 警告
   useEffect(() => {
     const el = scriptsScrollRef.current
@@ -818,9 +788,9 @@ export default function ChatPanel({
   useEffect(() => {
     const eAPI = (window as any).electronAPI
     if (!eAPI?.onBackendReady) return
-    const off = eAPI.onBackendReady(() => reconnect())
+    const off = eAPI.onBackendReady(() => reconnectWS())
     return () => off?.()
-  }, [reconnect])
+  }, [reconnectWS])
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -828,113 +798,9 @@ export default function ChatPanel({
 
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
-  const flushTokenBuffer = useCallback(() => {
-    if (!tokenBufferRef.current && !reasoningBufferRef.current) return
-    const contentChunk = tokenBufferRef.current
-    const reasoningChunk = reasoningBufferRef.current
-    tokenBufferRef.current = ''
-    reasoningBufferRef.current = ''
-    const msgId = streamingMsgIdRef.current
-    if (!msgId) return
-    setMessagesBySession(prev => ({
-      ...prev,
-      [sessionId]: (prev[sessionId] ?? []).map((m) => {
-        if (m.id !== msgId) return m
-        return {
-          ...m,
-          ...(contentChunk && { content: (m.content ?? '') + contentChunk }),
-          ...(reasoningChunk && { reasoning: (m.reasoning ?? '') + reasoningChunk }),
-        }
-      })
-    }))
-  }, [sessionId])
-
-  // Immediately flush on token (no RAF batching) to ensure incremental rendering
-  const scheduleFlush = useCallback(() => {
-    flushTokenBuffer()
-  }, [flushTokenBuffer])
-
-  useEffect(() => {
-    onMessage((msg: WSMessage) => {
-      if (msg.type === 'token') {
-        const token = msg.content ?? ''
-        tokenBufferRef.current += token
-        scheduleFlush()
-      } else if (msg.type === 'reasoning') {
-        const reasoning = msg.content ?? ''
-        reasoningBufferRef.current += reasoning
-        scheduleFlush()
-      } else if (msg.type === 'tool_call') {
-        flushTokenBuffer()
-        onAgentOperatingChange?.(true)
-        const toolCall: ToolCall = {
-          id: msg.call_id ?? Math.random().toString(36).slice(2),
-          name: msg.name ?? '', args: msg.args ?? {}, status: 'running',
-        }
-        // Notify parent when agent navigates the browser
-        if (toolCall.name === 'browser_navigate' && toolCall.args.url) {
-          onAgentNavigate?.(toolCall.args.url as string)
-        }
-        setMessagesBySession(prev => {
-          if (!streamingMsgIdRef.current) return prev
-          const msgId = streamingMsgIdRef.current
-          pendingToolsRef.current.set(toolCall.id, msgId)
-          return {
-            ...prev,
-            [sessionId]: (prev[sessionId] ?? []).map((m) => m.id === msgId ? { ...m, toolCalls: [...(m.toolCalls ?? []), toolCall] } : m)
-          }
-        })
-      } else if (msg.type === 'tool_result') {
-        flushTokenBuffer()
-        const callId = msg.call_id ?? ''
-        const msgId = pendingToolsRef.current.get(callId)
-        if (msgId) {
-          setMessagesBySession(prev => ({
-          ...prev,
-          [sessionId]: (prev[sessionId] ?? []).map((m) => m.id === msgId ? {
-            ...m, toolCalls: m.toolCalls?.map((t) => t.id === callId ? { ...t, result: String(msg.content ?? ''), status: 'done' } : t),
-          } : m)
-        }))
-        }
-      } else if (msg.type === 'done') {
-        flushTokenBuffer()
-        onAgentOperatingChange?.(false)
-        setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
-      } else if (msg.type === 'error') {
-        flushTokenBuffer()
-        onAgentOperatingChange?.(false)
-        setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
-        setMessagesBySession(prev => ({
-          ...prev,
-          [sessionId]: [...(prev[sessionId] ?? []), { id: `err-${Date.now()}`, role: 'assistant', content: `错误：${msg.content ?? '未知错误'}`, createdAt: Date.now() }]
-        }))
-      } else if (msg.type === 'stopped') {
-        flushTokenBuffer()
-        onAgentOperatingChange?.(false)
-        setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
-      } else if (msg.type === 'history_cleared') {
-        tokenBufferRef.current = ''
-        reasoningBufferRef.current = ''
-        if (flushRafRef.current != null) {
-          cancelAnimationFrame(flushRafRef.current)
-          flushRafRef.current = null
-        }
-        setMessagesBySession(prev => ({ ...prev, [sessionId]: [] }))
-      }
-    })
-    return () => {
-      if (flushRafRef.current != null) {
-        cancelAnimationFrame(flushRafRef.current)
-        flushRafRef.current = null
-      }
-      tokenBufferRef.current = ''
-      reasoningBufferRef.current = ''
-    }
-  }, [onMessage, flushTokenBuffer, scheduleFlush, sessionId])
-
   const sendMessage = useCallback((overrideText?: string) => {
     const text = (overrideText ?? input).trim()
-    if ((!text && attachedFiles.length === 0 && pickedElements.length === 0) || isStreaming || status !== 'connected') return
+    if ((!text && attachedFiles.length === 0 && pickedElements.length === 0) || isStreaming || wsStatus !== 'connected') return
     const userMsgId = `user-${Date.now()}`
     const assistantMsgId = `assistant-${Date.now()}`
 
@@ -958,15 +824,15 @@ export default function ChatPanel({
       aiContent = `[上传了 ${attachedFiles.length} 个文件]`
     }
 
-    setMessagesBySession(prev => ({
-      ...prev,
-      [sessionId]: [...(prev[sessionId] ?? []),
-        { id: userMsgId, role: 'user', content: displayContent, files: attachedFiles, domElements: [...pickedElements], createdAt: Date.now() },
-        { id: assistantMsgId, role: 'assistant', content: '', reasoning: '', toolCalls: [], createdAt: Date.now() },
+    const nextMsgs: Record<string, ChatMessage[]> = {
+      ...messagesRef.current,
+      [sessionId]: [...(messagesRef.current[sessionId] ?? []),
+        { id: userMsgId, role: 'user' as const, content: displayContent, files: attachedFiles, domElements: [...pickedElements], createdAt: Date.now() },
+        { id: assistantMsgId, role: 'assistant' as const, content: '', reasoning: '', toolCalls: [], createdAt: Date.now() },
       ]
-    }))
-    streamingMsgIdRef.current = assistantMsgId
-    setIsStreaming(true)
+    }
+    onMessagesChange?.(nextMsgs)
+    onStartStreaming(assistantMsgId)
     setInput('')
     setAttachedFiles([])
     // 发送后清空选中的 DOM 元素并同步清除网页上的 badges
@@ -976,12 +842,17 @@ export default function ChatPanel({
     }
     setPickedElements([])
     send({ type: 'chat', content: aiContent, files: attachedFiles.length > 0 ? attachedFiles : undefined })
-  }, [input, isStreaming, status, send, attachedFiles, pickedElements])
+  }, [input, isStreaming, wsStatus, send, attachedFiles, pickedElements, onMessagesChange, onStartStreaming, sessionId])
 
   // Expose sendMessage to parent via ref
   useEffect(() => {
     if (sendRef) sendRef.current = (text: string) => sendMessage(text)
   }, [sendRef, sendMessage])
+
+  // Expose setInput to parent via ref
+  useEffect(() => {
+    if (externalInputRef) externalInputRef.current = (text: string) => setInput(text)
+  }, [externalInputRef])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter 发送，Shift+Enter 换行
@@ -1008,7 +879,7 @@ export default function ChatPanel({
     adjustTextareaHeight()
   }, [input, adjustTextareaHeight])
 
-  const clearHistory = () => { send({ type: 'clear_history' }); setMessagesBySession(prev => ({ ...prev, [sessionId]: [] })) }
+  const clearHistory = () => { send({ type: 'clear_history' }); onMessagesChange?.({ ...messagesRef.current, [sessionId]: [] }) }
 
   // 文件上传处理
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1071,7 +942,7 @@ export default function ChatPanel({
     dragCounterRef.current = 0
     setIsDragging(false)
 
-    if (status !== 'connected') return
+    if (wsStatus !== 'connected') return
 
     const files = e.dataTransfer.files
     if (!files || files.length === 0) return
@@ -1107,20 +978,34 @@ export default function ChatPanel({
       }
       reader.readAsDataURL(file)
     })
-  }, [status])
+  }, [wsStatus])
+
+  // 右键菜单处理
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return
+    }
+
+    e.preventDefault()
+    const eAPI = (window as any).electronAPI
+    eAPI?.showContextMenu?.({
+      x: e.clientX,
+      y: e.clientY,
+      linkURL: '',
+      linkText: '',
+      srcURL: '',
+      mediaType: 'none',
+      selectionText: window.getSelection()?.toString() || '',
+      isEditable: false,
+    })
+  }, [])
 
   // 停止生成
   const stopGeneration = () => {
     send({ type: 'stop' })
-    setIsStreaming(false)
-    streamingMsgIdRef.current = null
-    pendingToolsRef.current.clear()
+    onStopStreaming()
   }
-
-  // 分析所有标签页 - 直接发送消息让 AI 调用工具
-  const analyzeAllTabs = useCallback(() => {
-    sendMessage('请分析我当前打开的所有标签页，帮我总结关键信息、比较不同来源的观点，并给出综合见解')
-  }, [sendMessage])
 
   // 点击外部关闭会话面板
   useEffect(() => {
@@ -1141,6 +1026,7 @@ export default function ChatPanel({
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
+      onContextMenu={handleContextMenu}
     >
       {/* 拖拽时的遮罩提示 */}
       {isDragging && (
@@ -1174,16 +1060,6 @@ export default function ChatPanel({
               <div className="absolute left-0 top-full mt-1 w-56 max-h-[60vh] bg-nb-base border border-nb-border rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-nb-border">
                   <span className="text-xs font-medium text-nb-text-muted">会话列表</span>
-                  <button
-                    onClick={() => {
-                      onNewSession()
-                      setShowSessionPanel(false)
-                    }}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-brand-600 hover:bg-brand-500 text-white transition-colors"
-                  >
-                    <Plus size={12} />
-                    新建
-                  </button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
                   {sessions.map(session => (
@@ -1257,20 +1133,24 @@ export default function ChatPanel({
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-nb-text-dim">
-            {status === 'connected'
+            {wsStatus === 'connected'
               ? <Wifi size={12} className="text-green-400" />
               : <WifiOff size={12} className="text-red-600 dark:text-red-400" />}
-            <span>{t(`chat.status.${status}`) || status}</span>
+            <span>{t(`chat.status.${wsStatus}`) || wsStatus}</span>
           </div>
           <button onClick={clearHistory} title={t('chat.clearHistory')}
             className="p-1.5 rounded hover:bg-nb-raised text-nb-text-dim hover:text-nb-text transition-colors">
             <Trash2 size={14} />
           </button>
+          <button onClick={onNewSession} title="新建会话"
+            className="p-1.5 rounded hover:bg-nb-raised text-nb-text-dim hover:text-nb-text transition-colors">
+            <Plus size={14} />
+          </button>
         </div>
       </div>
 
       {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
+      <div className={`flex-1 p-4 ${messages.length > 0 ? 'overflow-y-auto space-y-4 scrollbar-thin' : 'overflow-hidden'}`}>
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-nb-text-muted">
             <div className="relative">
@@ -1287,7 +1167,7 @@ export default function ChatPanel({
                 <button
                   key={s.id}
                   onClick={() => sendMessage(s.prompt)}
-                  disabled={isStreaming || status !== 'connected'}
+                  disabled={isStreaming || wsStatus !== 'connected'}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-nb-border/50 bg-nb-card/50 text-[11px] text-nb-text-dim hover:text-brand-500 hover:border-brand-500/30 transition-all duration-150"
                 >
                   <span>{s.icon}</span>
@@ -1316,7 +1196,7 @@ export default function ChatPanel({
               <button
                 key={s.id}
                 onClick={() => sendMessage(s.prompt)}
-                disabled={isStreaming || status !== 'connected'}
+                disabled={isStreaming || wsStatus !== 'connected'}
                 title={s.prompt}
                 className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-nb-border/60 bg-gradient-to-br from-nb-card to-nb-raised/50 hover:from-brand-500/10 hover:to-brand-500/5 hover:border-brand-500/50 hover:shadow-sm hover:shadow-brand-500/10 text-nb-text-soft hover:text-brand-500 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] transition-all duration-150 active:scale-95"
               >
@@ -1393,7 +1273,7 @@ export default function ChatPanel({
             onKeyDown={handleKeyDown}
             placeholder={t('chat.placeholder')}
             rows={3}
-            disabled={status !== 'connected'}
+            disabled={wsStatus !== 'connected'}
             className="w-full bg-transparent text-sm text-nb-text placeholder:text-nb-text-muted outline-none resize-none max-h-32 scrollbar-thin disabled:opacity-50 leading-relaxed"
           />
         </div>
@@ -1412,7 +1292,7 @@ export default function ChatPanel({
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={status !== 'connected'}
+              disabled={wsStatus !== 'connected'}
               className="shrink-0 p-1.5 rounded-lg text-nb-text-dim hover:text-brand-500 hover:bg-brand-500/10 transition-all duration-150 disabled:opacity-50"
               title="上传文件"
             >
@@ -1420,7 +1300,7 @@ export default function ChatPanel({
             </button>
             <button
               onClick={isDomPicking ? stopDomPicker : startDomPicker}
-              disabled={status !== 'connected'}
+              disabled={wsStatus !== 'connected'}
               className={`shrink-0 p-1.5 rounded-lg transition-all duration-150 disabled:opacity-50 ${
                 isDomPicking
                   ? 'text-brand-500 bg-brand-500/20 animate-pulse'

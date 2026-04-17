@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCmdSwitchTab:     (cb) => { ipcRenderer.on('cmd:switchTab',     (_e, id)   => cb(id));   return () => ipcRenderer.removeAllListeners('cmd:switchTab') },
   onCmdRestoreSession:(cb) => { ipcRenderer.on('cmd:restoreSession',(_e, tabs) => cb(tabs)); return () => ipcRenderer.removeAllListeners('cmd:restoreSession') },
   onCmdNewSession:    (cb) => { ipcRenderer.on('cmd:newSession',    ()         => cb());     return () => ipcRenderer.removeAllListeners('cmd:newSession') },
+  onCmdAskAI:         (cb) => { ipcRenderer.on('cmd:askAI',         (_e, text) => cb(text)); return () => ipcRenderer.removeAllListeners('cmd:askAI') },
 
   // ── Ad blocking ───────────────────────────────────────────────────────────
   getAdBlockEnabled: ()        => ipcRenderer.invoke('adblock:getEnabled'),

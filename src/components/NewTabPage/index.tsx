@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search, Clock, Globe, X, Send, Trash2, Bot, User, ChevronDown, Plus, Edit2, Paperclip, LayoutGrid, Check, Copy, Wifi, WifiOff, Loader2, Square, Settings, Sparkles } from 'lucide-react'
-import { useWebSocket } from '../../hooks/useWebSocket'
+import { Search, Clock, Globe, X, Send, Trash2, Bot, User, Plus, Edit2, Paperclip, LayoutGrid, Check, Copy, Wifi, WifiOff, Loader2, Square, Settings, Sparkles } from 'lucide-react'
 import MarkdownRenderer from '../common/MarkdownRenderer'
-import { listCategories, listScripts, getConfig, updateModel, getProviders, getSearchEngine } from '../../api/client'
-import type { ChatMessage, ChatSession, ToolCall, WSMessage } from '../../types'
+import { listCategories, getConfig, updateModel, getProviders, getSearchEngine } from '../../api/client'
+import type { ChatMessage, ChatSession } from '../../types'
 import { MessageAttachments, InputAttachments } from '../AttachmentsAdapter'
 import { ToolCallsGroup } from '../ToolCallsGroup'
 import {
@@ -32,7 +31,11 @@ interface Props {
   onRenameSession: (id: string, name: string) => void
   onDeleteSession: (id: string) => void
   onMessagesChange: (msgs: Record<string, ChatMessage[]>) => void
-  onAgentOperatingChange?: (operating: boolean) => void
+  send: (data: unknown) => void
+  wsStatus: 'connecting' | 'connected' | 'disconnected' | 'error'
+  isStreaming: boolean
+  onStartStreaming: (msgId: string) => void
+  onStopStreaming: () => void
 }
 
 // ── Auto-categorization (fallback when no category field) ──────────────────────
@@ -129,15 +132,6 @@ const PRESET_MODELS: Record<string, { label: string; value: string }[]> = {
   ],
 }
 
-// ── Default Scripts ───────────────────────────────────────────────────────────
-
-const DEFAULT_SCRIPTS: Script[] = [
-  { id: 'default-1', name: '总结页面', prompt: '请总结当前浏览器页面的主要内容（使用 browser_get_page_content 工具）', icon: '📝' },
-  { id: 'default-2', name: '截图分析', prompt: '请截取当前页面截图并描述你看到的内容', icon: '📸' },
-  { id: 'default-3', name: '提取链接', prompt: '请列出当前页面上所有重要链接', icon: '🔗' },
-  { id: 'default-4', name: '翻译页面', prompt: '请将当前页面的主要内容翻译成中文（使用 browser_get_page_content 工具读取）', icon: '🌐' },
-  { id: 'default-5', name: '填写表单', prompt: '请帮我查看当前页面有哪些表单字段，并提示我如何填写', icon: '📋' },
-]
 
 // ── Provider Labels ───────────────────────────────────────────────────────────
 
@@ -162,7 +156,6 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 // ── Helper Types ─────────────────────────────────────────────────────────────-
 
-interface Script { id: string; name: string; prompt: string; icon: string }
 interface ProviderConfig { apiKey?: string; apiBase?: string; models?: { label: string; value: string }[] }
 
 // ── Message Bubble Component ──────────────────────────────────────────────────
@@ -453,23 +446,13 @@ export default function NewTabPage({
   onNavigate, bookmarks, history,
   sessions, currentSessionId, messagesBySession: propMessagesBySession,
   onSwitchSession, onNewSession, onRenameSession, onDeleteSession, onMessagesChange,
-  onAgentOperatingChange
+  send, wsStatus, isStreaming, onStartStreaming, onStopStreaming,
 }: Props) {
   const { t, i18n } = useTranslation()
   const [search, setSearch] = useState('')
   const [categories, setCategories] = useState<CategoryInfo[]>([])
-
-  // Chat state - messages are managed locally for streaming performance,
-  // but synced to parent via onMessagesChange
-  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>(propMessagesBySession)
-
-  // Sync local messages with parent when props change (e.g. from ChatPanel)
-  useEffect(() => {
-    setMessagesBySession(propMessagesBySession)
-  }, [propMessagesBySession])
+  const messagesBySession = propMessagesBySession
   const [input, setInput] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [scripts, setScripts] = useState<Script[]>(DEFAULT_SCRIPTS)
   const [currentModel, setCurrentModel] = useState('')
   const [currentProvider, setCurrentProvider] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; data: string; type: string }[]>([])
@@ -486,14 +469,9 @@ export default function NewTabPage({
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragCounterRef = useRef(0)
-  const streamingMsgIdRef = useRef<string | null>(null)
-  const pendingToolsRef = useRef<Map<string, string>>(new Map())
-  const tokenBufferRef = useRef('')
-  const reasoningBufferRef = useRef('')
-  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const messagesRef = useRef(propMessagesBySession)
+  useEffect(() => { messagesRef.current = propMessagesBySession }, [propMessagesBySession])
   const quickAccessResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
-
-  const { send, onMessage, status } = useWebSocket(currentSessionId)
 
   // Load search engine config
   useEffect(() => {
@@ -569,107 +547,6 @@ export default function NewTabPage({
     loadConfig()
   }, [])
 
-  // Load scripts
-  useEffect(() => {
-    listScripts().then(serverScripts => {
-      const hasCustomScripts = serverScripts.some(s => !s.id.startsWith('default-'))
-      if (hasCustomScripts || serverScripts.length > DEFAULT_SCRIPTS.length) {
-        setScripts(serverScripts)
-      }
-    }).catch(() => {})
-  }, [])
-
-  // Persist messages - sync to parent when local messages change
-  useEffect(() => {
-    if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
-    persistTimerRef.current = setTimeout(() => {
-      onMessagesChange(messagesBySession)
-    }, 800)
-    return () => { if (persistTimerRef.current) clearTimeout(persistTimerRef.current) }
-  }, [messagesBySession, onMessagesChange])
-
-  // WebSocket message handling
-  useEffect(() => {
-    onMessage((msg: WSMessage) => {
-      if (msg.type === 'token') {
-        tokenBufferRef.current += msg.content ?? ''
-        flushTokenBuffer()
-      } else if (msg.type === 'reasoning') {
-        reasoningBufferRef.current += msg.content ?? ''
-        flushTokenBuffer()
-      } else if (msg.type === 'tool_call') {
-        flushTokenBuffer()
-        onAgentOperatingChange?.(true)
-        const toolCall: ToolCall = {
-          id: msg.call_id ?? Math.random().toString(36).slice(2),
-          name: msg.name ?? '', args: msg.args ?? {}, status: 'running',
-        }
-        setMessagesBySession(prev => {
-          if (!streamingMsgIdRef.current) return prev
-          const msgId = streamingMsgIdRef.current
-          pendingToolsRef.current.set(toolCall.id, msgId)
-          return {
-            ...prev,
-            [currentSessionId]: (prev[currentSessionId] ?? []).map((m) => m.id === msgId ? { ...m, toolCalls: [...(m.toolCalls ?? []), toolCall] } : m)
-          }
-        })
-      } else if (msg.type === 'tool_result') {
-        flushTokenBuffer()
-        const callId = msg.call_id ?? ''
-        const msgId = pendingToolsRef.current.get(callId)
-        if (msgId) {
-          setMessagesBySession(prev => ({
-            ...prev,
-            [currentSessionId]: (prev[currentSessionId] ?? []).map((m) => m.id === msgId ? {
-              ...m, toolCalls: m.toolCalls?.map((t) => t.id === callId ? { ...t, result: String(msg.content ?? ''), status: 'done' } : t),
-            } : m)
-          }))
-        }
-      } else if (msg.type === 'done') {
-        flushTokenBuffer()
-        onAgentOperatingChange?.(false)
-        setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
-      } else if (msg.type === 'error') {
-        flushTokenBuffer()
-        onAgentOperatingChange?.(false)
-        setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
-        setMessagesBySession(prev => ({
-          ...prev,
-          [currentSessionId]: [...(prev[currentSessionId] ?? []), { id: `err-${Date.now()}`, role: 'assistant', content: `错误：${msg.content ?? '未知错误'}`, createdAt: Date.now() }]
-        }))
-      } else if (msg.type === 'stopped') {
-        flushTokenBuffer()
-        onAgentOperatingChange?.(false)
-        setIsStreaming(false); streamingMsgIdRef.current = null; pendingToolsRef.current.clear()
-      } else if (msg.type === 'history_cleared') {
-        tokenBufferRef.current = ''
-        reasoningBufferRef.current = ''
-        setMessagesBySession(prev => ({ ...prev, [currentSessionId]: [] }))
-      }
-    })
-  }, [onMessage, currentSessionId])
-
-  const flushTokenBuffer = useCallback(() => {
-    if (!tokenBufferRef.current && !reasoningBufferRef.current) return
-    const contentChunk = tokenBufferRef.current
-    const reasoningChunk = reasoningBufferRef.current
-    tokenBufferRef.current = ''
-    reasoningBufferRef.current = ''
-    const msgId = streamingMsgIdRef.current
-    if (!msgId) return
-    setMessagesBySession(prev => ({
-      ...prev,
-      [currentSessionId]: (prev[currentSessionId] ?? []).map((m) => {
-        if (m.id !== msgId) return m
-        return {
-          ...m,
-          ...(contentChunk && { content: (m.content ?? '') + contentChunk }),
-          ...(reasoningChunk && { reasoning: (m.reasoning ?? '') + reasoningChunk }),
-        }
-      })
-    }))
-  }, [currentSessionId])
-
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
@@ -678,24 +555,24 @@ export default function NewTabPage({
 
   const sendMessage = useCallback((overrideText?: string) => {
     const text = (overrideText ?? input).trim()
-    if ((!text && attachedFiles.length === 0) || isStreaming || status !== 'connected') return
+    if ((!text && attachedFiles.length === 0) || isStreaming || wsStatus !== 'connected') return
     const userMsgId = `user-${Date.now()}`
     const assistantMsgId = `assistant-${Date.now()}`
     const userContent = text || (attachedFiles.length > 0 ? `[上传了 ${attachedFiles.length} 个文件]` : '')
 
-    setMessagesBySession(prev => ({
-      ...prev,
-      [currentSessionId]: [...(prev[currentSessionId] ?? []),
-        { id: userMsgId, role: 'user', content: userContent, files: attachedFiles, createdAt: Date.now() },
-        { id: assistantMsgId, role: 'assistant', content: '', reasoning: '', toolCalls: [], createdAt: Date.now() },
+    const nextMsgs: Record<string, ChatMessage[]> = {
+      ...messagesRef.current,
+      [currentSessionId]: [...(messagesRef.current[currentSessionId] ?? []),
+        { id: userMsgId, role: 'user' as const, content: userContent, files: attachedFiles, createdAt: Date.now() },
+        { id: assistantMsgId, role: 'assistant' as const, content: '', reasoning: '', toolCalls: [], createdAt: Date.now() },
       ]
-    }))
-    streamingMsgIdRef.current = assistantMsgId
-    setIsStreaming(true)
+    }
+    onMessagesChange(nextMsgs)
+    onStartStreaming(assistantMsgId)
     setInput('')
     setAttachedFiles([])
     send({ type: 'chat', content: userContent, files: attachedFiles.length > 0 ? attachedFiles : undefined })
-  }, [input, isStreaming, status, send, attachedFiles, currentSessionId])
+  }, [input, isStreaming, wsStatus, send, attachedFiles, currentSessionId, onMessagesChange, onStartStreaming])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -718,7 +595,7 @@ export default function NewTabPage({
 
   const clearHistory = () => {
     send({ type: 'clear_history' })
-    setMessagesBySession(prev => ({ ...prev, [currentSessionId]: [] }))
+    onMessagesChange({ ...messagesRef.current, [currentSessionId]: [] })
   }
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -783,7 +660,7 @@ export default function NewTabPage({
     dragCounterRef.current = 0
     setIsDragging(false)
 
-    if (status !== 'connected') return
+    if (wsStatus !== 'connected') return
 
     const files = e.dataTransfer.files
     if (!files || files.length === 0) return
@@ -817,7 +694,7 @@ export default function NewTabPage({
       }
       reader.readAsDataURL(file)
     })
-  }, [status])
+  }, [wsStatus])
 
   // 右键菜单处理
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -843,9 +720,7 @@ export default function NewTabPage({
 
   const stopGeneration = () => {
     send({ type: 'stop' })
-    setIsStreaming(false)
-    streamingMsgIdRef.current = null
-    pendingToolsRef.current.clear()
+    onStopStreaming()
   }
 
   const handleModelChange = async (model: string, provider: string) => {
@@ -869,11 +744,9 @@ export default function NewTabPage({
   const deleteSession = (id: string) => {
     if (sessions.length <= 1) return
     onDeleteSession(id)
-    setMessagesBySession(prev => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
+    const next = { ...messagesRef.current }
+    delete next[id]
+    onMessagesChange(next)
   }
 
   const switchSession = (id: string) => {
@@ -1071,10 +944,10 @@ export default function NewTabPage({
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 text-xs text-nb-text-dim">
-              {status === 'connected'
+              {wsStatus === 'connected'
                 ? <Wifi size={12} className="text-green-400" />
                 : <WifiOff size={12} className="text-red-600 dark:text-red-400" />}
-              <span>{t(`chat.status.${status}`) || status}</span>
+              <span>{t(`chat.status.${wsStatus}`) || wsStatus}</span>
             </div>
             <button onClick={clearHistory} title={t('chat.clearHistory')}
               className="p-1.5 rounded hover:bg-nb-raised text-nb-text-dim hover:text-nb-text transition-colors">
@@ -1084,7 +957,7 @@ export default function NewTabPage({
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
+        <div className={`flex-1 p-4 ${currentMessages.length > 0 ? 'overflow-y-auto space-y-4 scrollbar-thin' : 'overflow-hidden'}`}>
           {currentMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-nb-text-muted">
               <div className="relative">
@@ -1095,21 +968,6 @@ export default function NewTabPage({
                 <p className="text-sm font-medium text-nb-text-soft">{t('chat.empty')}</p>
                 <p className="text-xs text-nb-text-muted max-w-[200px]">{t('chat.emptyHint')}</p>
               </div>
-              {/* Quick Scripts */}
-              <div className="flex gap-2 mt-2 flex-wrap justify-center">
-                {scripts.slice(0, 3).map(s => (
-                  <button
-                    key={s.id}
-                    onClick={() => sendMessage(s.prompt)}
-                    disabled={isStreaming || status !== 'connected'}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-nb-border/50 bg-nb-card/50 text-[11px] text-nb-text-dim hover:text-brand-500 hover:border-brand-500/30 transition-all duration-150"
-                  >
-                    <span>{s.icon}</span>
-                    <span>{s.name}</span>
-                  </button>
-                ))}
-              </div>
-
               {/* Quick Search */}
               <div className="w-full max-w-md mt-4">
                 <div className="flex items-center gap-3 bg-nb-deepest/40 border border-nb-border/70 hover:border-nb-text-muted/60
@@ -1153,7 +1011,7 @@ export default function NewTabPage({
               onKeyDown={handleKeyDown}
               placeholder={t('chat.placeholder')}
               rows={3}
-              disabled={status !== 'connected'}
+              disabled={wsStatus !== 'connected'}
               className="w-full bg-transparent text-sm text-nb-text placeholder:text-nb-text-muted outline-none resize-none max-h-32 scrollbar-thin disabled:opacity-50 leading-relaxed"
             />
           </div>
@@ -1172,7 +1030,7 @@ export default function NewTabPage({
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={status !== 'connected'}
+                disabled={wsStatus !== 'connected'}
                 className="shrink-0 p-1.5 rounded-lg text-nb-text-dim hover:text-brand-500 hover:bg-brand-500/10 transition-all duration-150 disabled:opacity-50"
                 title="上传文件"
               >

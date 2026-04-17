@@ -103,13 +103,38 @@ export const addHistory = (url: string, title: string, favicon?: string) =>
   request('/api/history', { method: 'POST', body: JSON.stringify({ url, title, favicon: favicon ?? '' }) })
 export const clearHistory = () => request('/api/history', { method: 'DELETE' })
 
-// Memory
-export const listMemory = () =>
-  request<Array<{ id: string; content: string; createdAt: number }>>('/api/memory')
-export const addMemory = (content: string) =>
-  request<{ id: string; content: string; createdAt: number }>('/api/memory', { method: 'POST', body: JSON.stringify({ content }) })
-export const deleteMemory = (id: string) => request(`/api/memory/${id}`, { method: 'DELETE' })
-export const clearMemory = () => request('/api/memory', { method: 'DELETE' })
+// ── L1 Prompt Memory ────────────────────────────────────────────────────────
+export const listPromptMemory = () =>
+  request<Array<{ id: string; content: string; createdAt: number; tags?: string[] }>>('/api/memory/prompt')
+export const addPromptMemory = (content: string) =>
+  request<{ id: string; content: string; createdAt: number }>('/api/memory/prompt', { method: 'POST', body: JSON.stringify({ content }) })
+export const deletePromptMemory = (id: string) => request(`/api/memory/prompt/${id}`, { method: 'DELETE' })
+export const clearPromptMemory = () => request('/api/memory/prompt', { method: 'DELETE' })
+
+// ── L2 Session Archive ───────────────────────────────────────────────────────
+export const listArchiveSessions = () =>
+  request<{ sessions: Array<{ session_id: string; message_count: number; last_active: number }> }>('/api/memory/archive/sessions')
+export const searchArchive = (query: string, limit = 10) =>
+  request<{ results: Array<{ session_id: string; role: string; content: string; created_at: number; score: number }> }>('/api/memory/archive/search', { method: 'POST', body: JSON.stringify({ query, limit }) })
+export const clearArchiveSession = (sessionId: string) =>
+  request(`/api/memory/archive/session/${sessionId}`, { method: 'DELETE' })
+export const clearAllArchive = () => request('/api/memory/archive', { method: 'DELETE' })
+
+// ── L3 Skill Memory ──────────────────────────────────────────────────────────
+export const listSkillMemory = () =>
+  request<{ skills: Array<{ name: string; filename: string; title: string }> }>('/api/memory/skills')
+export const getSkillMemory = (name: string) =>
+  request<{ name: string; content: string }>(`/api/memory/skills/${name}`)
+export const saveSkillMemory = (name: string, content: string) =>
+  request('/api/memory/skills', { method: 'POST', body: JSON.stringify({ name, content }) })
+export const deleteSkillMemory = (name: string) =>
+  request(`/api/memory/skills/${name}`, { method: 'DELETE' })
+
+// Back-compat aliases
+export const listMemory = listPromptMemory
+export const addMemory = addPromptMemory
+export const deleteMemory = deletePromptMemory
+export const clearMemory = clearPromptMemory
 
 // Scripts
 export const listScripts = () =>

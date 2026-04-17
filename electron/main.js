@@ -1344,6 +1344,8 @@ function registerIpc() {
         { label: `搜索 "${q}${q.length < p.selectionText.trim().length ? '…' : ''}"`,
           click: () => shell?.webContents?.send('cmd:newTab',
             `https://www.google.com/search?q=${encodeURIComponent(p.selectionText.trim())}`) },
+        { label: '问 UrchinAI',
+          click: () => shell?.webContents?.send('cmd:askAI', p.selectionText.trim()) },
         { type: 'separator' },
       )
     }
@@ -1759,6 +1761,18 @@ function registerIpc() {
           return false;
         },
 
+        handleContextMenu(e) {
+          e.stopPropagation();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+
+          // 右键退出选取模式
+          window.postMessage({ type: '__DOM_PICKER_CANCELLED' }, '*');
+          this.stop();
+
+          return false;
+        },
+
         start() {
           // 如果已经存在 picker 实例，只重新创建 overlay 和事件监听
           // 保留已选中的元素和 badges
@@ -1767,11 +1781,13 @@ function registerIpc() {
 
           this._mouseover = this.handleMouseOver.bind(this);
           this._click = this.handleClick.bind(this);
+          this._contextmenu = this.handleContextMenu.bind(this);
           this._mousedown = (e) => { e.stopPropagation(); e.preventDefault(); };
           this._mouseup = (e) => { e.stopPropagation(); e.preventDefault(); };
 
           document.addEventListener('mouseover', this._mouseover, true);
           document.addEventListener('click', this._click, true);
+          document.addEventListener('contextmenu', this._contextmenu, true);
           document.addEventListener('mousedown', this._mousedown, true);
           document.addEventListener('mouseup', this._mouseup, true);
         },
@@ -1791,6 +1807,7 @@ function registerIpc() {
 
           document.removeEventListener('mouseover', this._mouseover, true);
           document.removeEventListener('click', this._click, true);
+          document.removeEventListener('contextmenu', this._contextmenu, true);
           document.removeEventListener('mousedown', this._mousedown, true);
           document.removeEventListener('mouseup', this._mouseup, true);
         }
@@ -1839,6 +1856,10 @@ function registerIpc() {
             wc.removeListener('console-message', domPickerConsoleListener)
             browserWindowForPageContents(wc)?.webContents?.send('domPicker:picked', data)
           }
+        } else if (msg.includes('__DOM_PICKER_CANCELLED')) {
+          domPickerMode = false
+          wc.removeListener('console-message', domPickerConsoleListener)
+          browserWindowForPageContents(wc)?.webContents?.send('domPicker:picked', null)
         }
       } catch (_) {}
     }
@@ -1852,6 +1873,8 @@ function registerIpc() {
         window.__domPickerMessageListener = function(e) {
           if (e.data && e.data.type === '__DOM_PICKER_RESULT') {
             console.log('__DOM_PICKER_RESULT' + JSON.stringify(e.data.data));
+          } else if (e.data && e.data.type === '__DOM_PICKER_CANCELLED') {
+            console.log('__DOM_PICKER_CANCELLED');
           }
         };
         window.addEventListener('message', window.__domPickerMessageListener);
