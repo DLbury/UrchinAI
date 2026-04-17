@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -53,20 +54,25 @@ _SYSTEM_PROMPT_BASE = """\
   - 禁止并行调用多个工具\
 """
 
-NANOBOT_MEMORY = Path.home() / ".nanobot" / "memory.json"
+from agent.memory import get_prompt_memory, get_session_archive, get_skill_memory
+
+_PROMPT_MEMORY = get_prompt_memory()
+_SESSION_ARCHIVE = get_session_archive()
+_SKILL_MEMORY = get_skill_memory()
 
 
-def _build_system_prompt() -> str:
-    """Build system prompt, appending any saved memory entries."""
-    try:
-        if NANOBOT_MEMORY.exists():
-            entries = json.loads(NANOBOT_MEMORY.read_text(encoding="utf-8"))
-            if entries:
-                notes = "\n".join(f"- {e.get('content', '')}" for e in entries if e.get("content"))
-                return _SYSTEM_PROMPT_BASE + f"\n\n【用户记忆事项（请在回答时参考）】\n{notes}"
-    except Exception:
-        pass
-    return _SYSTEM_PROMPT_BASE
+def _build_system_prompt(user_query: str = "") -> str:
+    """Build system prompt, appending top-k relevant prompt memories and skills."""
+    prompt = _SYSTEM_PROMPT_BASE
+    relevant_memories = _PROMPT_MEMORY.retrieve_relevant(user_query, top_k=3)
+    if relevant_memories:
+        notes = "\n".join(f"- {note}" for note in relevant_memories)
+        prompt += f"\n\n【相关记忆（请在回答时参考）】\n{notes}"
+    relevant_skills = _SKILL_MEMORY.retrieve_relevant(user_query, top_k=2)
+    if relevant_skills:
+        for name, content in relevant_skills:
+            prompt += f"\n\n【技能参考: {name}】\n{content}\n"
+    return prompt
 
 # OpenAI function-call schema for each browser tool
 _BROWSER_TOOL_SCHEMAS: list[dict] = [
@@ -270,6 +276,85 @@ _BROWSER_TOOL_SCHEMAS: list[dict] = [
     },
 ]
 
+_MEMORY_TOOL_SCHEMAS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_add",
+            "description": (
+                "将一条信息添加到长期记忆中。当用户提到个人偏好、习惯、背景信息或任何未来对话可能有用的事实时，"
+                "调用此工具保存记忆。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "记忆内容"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "可选标签，用于分类记忆",
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_remove",
+            "description": "根据 ID 从长期记忆中删除一条记忆。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entry_id": {"type": "string", "description": "要删除的记忆条目 ID"},
+                },
+                "required": ["entry_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_history",
+            "description": (
+                "搜索历史会话记录。当用户提到之前聊过的话题、你忘记的细节、"
+                "或需要引用过往对话时，调用此工具检索相关记录。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词或问题"},
+                    "limit": {"type": "integer", "description": "返回结果数量上限", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_skills",
+            "description": "列出所有可用的技能文档（markdown 文件）。",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "load_skill",
+            "description": "加载指定技能的完整 markdown 内容。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "技能名称（不含 .md 后缀）"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+]
+
 
 def _load_config() -> dict:
     if NANOBOT_CONFIG.exists():
@@ -377,6 +462,8 @@ class AgentManager:
         self._history: list[dict] = []
         self._nanobot_available = self._check_nanobot()
         self._stop_event = asyncio.Event()
+        self._session_archive = _SESSION_ARCHIVE
+        self._archived_count = 0
 
     def _check_nanobot(self) -> bool:
         try:
@@ -389,6 +476,14 @@ class AgentManager:
     def stop(self) -> None:
         """Signal the agent loop to stop as soon as possible."""
         self._stop_event.set()
+
+    async def _archive_new_turns(self) -> None:
+        """Archive any unarchived history turns to the session archive."""
+        if len(self._history) <= self._archived_count:
+            return
+        new_turns = self._history[self._archived_count:]
+        await asyncio.to_thread(self._session_archive.archive_turns, self.session_id, new_turns)
+        self._archived_count = len(self._history)
 
     async def chat(self, user_message: str, files: list | None = None) -> AsyncGenerator[AgentMessage, None]:
         """Stream agent responses for a user message."""
@@ -445,10 +540,24 @@ class AgentManager:
         # In Electron edition, browser tools always go through the HTTP bridge
         from agent.browser_tool import BrowserTools
         browser_tools_obj = BrowserTools()
-        tools = _BROWSER_TOOL_SCHEMAS
+        tools = _BROWSER_TOOL_SCHEMAS + _MEMORY_TOOL_SCHEMAS
 
-        # Build messages: system (with memory) + history (already includes latest user turn)
-        messages: list[dict] = [{"role": "system", "content": _build_system_prompt()}] + self._history
+        # Extract the latest user text for memory retrieval
+        last_user_text = ""
+        for msg in reversed(self._history):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    last_user_text = content
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            last_user_text = part.get("text", "")
+                            break
+                break
+
+        # Build messages: system (with relevant memory) + history (already includes latest user turn)
+        messages: list[dict] = [{"role": "system", "content": _build_system_prompt(last_user_text)}] + self._history
 
         raw_max_iterations = defaults.get("maxIterations")
         raw_max_tokens = defaults.get("maxTokens")
@@ -588,7 +697,34 @@ class AgentManager:
                         break
 
                     # Execute
-                    if browser_tools_obj and hasattr(browser_tools_obj, tool_name):
+                    if tool_name == "memory_add":
+                        entry = _PROMPT_MEMORY.add(args.get("content", ""), args.get("tags", []))
+                        result = f"已添加记忆（ID: {entry['id']}）"
+                    elif tool_name == "memory_remove":
+                        success = _PROMPT_MEMORY.remove(args.get("entry_id", ""))
+                        result = "已删除记忆。" if success else "未找到该记忆条目。"
+                    elif tool_name == "search_history":
+                        rows = _SESSION_ARCHIVE.search(args.get("query", ""), limit=args.get("limit", 5))
+                        if rows:
+                            lines = []
+                            for r in rows:
+                                ts = r.get("created_at", 0)
+                                time_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
+                                lines.append(f"[{time_str}] {r.get('role', '')}: {r.get('content', '')}")
+                            result = "历史记录搜索结果：\n" + "\n".join(lines)
+                        else:
+                            result = "未找到相关历史记录。"
+                    elif tool_name == "list_skills":
+                        skills = _SKILL_MEMORY.list_skills()
+                        if skills:
+                            lines = [f"- {s['name']}: {s['title']}" for s in skills]
+                            result = "可用技能列表：\n" + "\n".join(lines)
+                        else:
+                            result = "暂无可用的技能文档。"
+                    elif tool_name == "load_skill":
+                        skill_content = _SKILL_MEMORY.load_skill(args.get("name", ""))
+                        result = skill_content
+                    elif browser_tools_obj and hasattr(browser_tools_obj, tool_name):
                         try:
                             fn = getattr(browser_tools_obj, tool_name)
                             result = await fn(**args)
@@ -658,6 +794,7 @@ class AgentManager:
         final_content = ""
         if self._history and self._history[-1]["role"] == "assistant" and isinstance(self._history[-1].get("content"), str):
             final_content = self._history[-1]["content"]
+        await self._archive_new_turns()
         yield AgentMessage("done", final_content)
 
     async def _fallback_chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
@@ -671,6 +808,7 @@ class AgentManager:
             yield AgentMessage("token", word + " ")
             await asyncio.sleep(0.02)
         self._history.append({"role": "assistant", "content": reply})
+        await self._archive_new_turns()
         yield AgentMessage("done", reply)
 
     def clear_history(self) -> None:

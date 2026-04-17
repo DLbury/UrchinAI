@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import {
   X, Settings, Save, Plus, Trash2, Eye, EyeOff,
   Loader2, CheckCircle, Puzzle, Server, Terminal,
@@ -12,7 +12,9 @@ import {
   listSkills, installSkill, installLocalSkill, deleteSkill,
   listAnthropicSkills,
   listMCPServers, addMCPServer, updateMCPServer, deleteMCPServer,
-  listMemory, addMemory, deleteMemory, clearMemory,
+  listPromptMemory, addPromptMemory, deletePromptMemory, clearPromptMemory,
+  listArchiveSessions, searchArchive, clearArchiveSession, clearAllArchive,
+  listSkillMemory, getSkillMemory, saveSkillMemory, deleteSkillMemory,
   listCategories, addCategory, deleteCategory,
   getAgentLimits, updateAgentLimits, getSearchEngine, updateSearchEngine,
 } from '../../api/client'
@@ -954,8 +956,49 @@ function MCPTab() {
 
 // ── Memory Tab ────────────────────────────────────────────────────────────────
 
+type MemorySubTab = 'prompt' | 'archive' | 'skills'
+
+function formatTime(ts: number) {
+  const d = new Date(ts * 1000)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 function MemoryTab() {
-  const [items, setItems] = useState<{ id: string; content: string; createdAt: number }[]>([])
+  const [subTab, setSubTab] = useState<MemorySubTab>('prompt')
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-1 p-1 bg-nb-raised rounded-lg w-fit">
+        {([
+          { id: 'prompt', label: 'Prompt 记忆' },
+          { id: 'archive', label: '历史归档' },
+          { id: 'skills', label: '技能文档' },
+        ] as const).map(t => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+              subTab === t.id
+                ? 'bg-nb-card text-nb-text shadow-sm'
+                : 'text-nb-text-soft hover:text-nb-text'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === 'prompt' && <PromptMemoryPanel />}
+      {subTab === 'archive' && <ArchivePanel />}
+      {subTab === 'skills' && <SkillMemoryPanel />}
+    </div>
+  )
+}
+
+// ── L1 Prompt Memory Panel ───────────────────────────────────────────────────
+
+function PromptMemoryPanel() {
+  const [items, setItems] = useState<{ id: string; content: string; createdAt: number; tags?: string[] }[]>([])
   const [newText, setNewText] = useState('')
   const [loading, setLoading] = useState(true)
   const loadedRef = useRef(false)
@@ -964,37 +1007,36 @@ function MemoryTab() {
     if (loadedRef.current) return
     loadedRef.current = true
     setLoading(true)
-    try { setItems(await listMemory()) } finally { setLoading(false) }
+    try { setItems(await listPromptMemory()) } finally { setLoading(false) }
   }, [])
 
   useEffect(() => { load() }, [load])
 
   const handleAdd = async () => {
     if (!newText.trim()) return
-    const entry = await addMemory(newText.trim())
+    const entry = await addPromptMemory(newText.trim())
     setItems(prev => [...prev, entry])
     setNewText('')
   }
 
   const handleDelete = async (id: string) => {
-    await deleteMemory(id)
+    await deletePromptMemory(id)
     setItems(prev => prev.filter(m => m.id !== id))
   }
 
   const handleClear = async () => {
-    if (!confirm('确认清空所有记忆？')) return
-    await clearMemory()
+    if (!confirm('确认清空所有 Prompt 记忆？')) return
+    await clearPromptMemory()
     setItems([])
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex items-start gap-2.5 p-3.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700/30 rounded-xl text-xs text-blue-700 dark:text-blue-300">
         <Brain size={14} className="shrink-0 mt-0.5" />
-        <span>AI 记忆会附加到每次对话的系统提示中，让智能体记住你的偏好和重要信息。</span>
+        <span>Prompt 记忆会根据当前问题按需检索，只有最相关的记忆才会进入系统提示，避免污染上下文。</span>
       </div>
 
-      {/* Add new memory */}
       <div className="flex gap-2">
         <input
           value={newText}
@@ -1012,7 +1054,6 @@ function MemoryTab() {
         </button>
       </div>
 
-      {/* List */}
       {loading ? (
         <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-nb-text-muted" /></div>
       ) : items.length === 0 ? (
@@ -1023,8 +1064,17 @@ function MemoryTab() {
       ) : (
         <div className="space-y-2">
           {items.map(m => (
-            <div key={m.id} className="flex items-start gap-2 p-3 bg-nb-card rounded-lg group">
-              <p className="flex-1 text-sm text-nb-text-soft leading-relaxed">{m.content}</p>
+            <div key={m.id} className="flex items-start gap-2 p-3 bg-nb-card rounded-lg group border border-nb-border-soft">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-nb-text-soft leading-relaxed break-words">{m.content}</p>
+                {(m.tags && m.tags.length > 0) && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {m.tags.map(tag => (
+                      <span key={tag} className="px-1.5 py-0.5 bg-nb-raised rounded text-[10px] text-nb-text-dim">{tag}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 onClick={() => handleDelete(m.id)}
                 className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-red-600 dark:hover:text-red-400 transition-colors"
@@ -1036,6 +1086,266 @@ function MemoryTab() {
           <button onClick={handleClear} className="w-full text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 py-1.5 transition-colors">
             清空所有记忆
           </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── L2 Archive Panel ─────────────────────────────────────────────────────────
+
+function ArchivePanel() {
+  const [sessions, setSessions] = useState<{ session_id: string; message_count: number; last_active: number }[]>([])
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<{ session_id: string; role: string; content: string; created_at: number; score: number }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searching, setSearching] = useState(false)
+  const loadedRef = useRef(false)
+
+  const load = useCallback(async () => {
+    if (loadedRef.current) return
+    loadedRef.current = true
+    setLoading(true)
+    try {
+      const data = await listArchiveSessions()
+      setSessions(data.sessions)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleSearch = async () => {
+    if (!query.trim()) return
+    setSearching(true)
+    try {
+      const data = await searchArchive(query.trim(), 20)
+      setResults(data.results)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (!confirm(`确认删除会话 ${sessionId.slice(0, 8)}… 的所有归档记录？`)) return
+    await clearArchiveSession(sessionId)
+    setSessions(prev => prev.filter(s => s.session_id !== sessionId))
+  }
+
+  const handleClearAll = async () => {
+    if (!confirm('确认清空所有历史归档？此操作不可恢复。')) return
+    await clearAllArchive()
+    setSessions([])
+    setResults([])
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2.5 p-3.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 rounded-xl text-xs text-amber-700 dark:text-amber-300">
+        <Search size={14} className="shrink-0 mt-0.5" />
+        <span>历史归档自动保存所有对话记录，Agent 可通过 search_history 工具按需检索过往内容。</span>
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
+          placeholder="搜索历史记录…"
+          className="flex-1 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft placeholder:text-nb-text-muted outline-none focus:border-brand-500"
+        />
+        <button
+          onClick={handleSearch}
+          disabled={!query.trim() || searching}
+          className="shrink-0 px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-sm text-white transition-colors"
+        >
+          {searching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+        </button>
+      </div>
+
+      {results.length > 0 && (
+        <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin pr-1">
+          <div className="text-xs text-nb-text-dim">搜索结果</div>
+          {results.map((r, idx) => (
+            <div key={idx} className="p-2.5 bg-nb-card rounded-lg border border-nb-border-soft text-xs space-y-1">
+              <div className="flex items-center gap-2 text-nb-text-dim">
+                <span className="px-1.5 py-0.5 bg-nb-raised rounded text-[10px]">{r.role}</span>
+                <span>{formatTime(r.created_at)}</span>
+                <span className="text-[10px] opacity-60">score: {Number(r.score).toFixed(3)}</span>
+              </div>
+              <p className="text-nb-text-soft line-clamp-3">{r.content}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs text-nb-text-dim">会话列表</div>
+          {sessions.length > 0 && (
+            <button onClick={handleClearAll} className="text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition-colors">
+              清空全部
+            </button>
+          )}
+        </div>
+        {loading ? (
+          <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-nb-text-muted" /></div>
+        ) : sessions.length === 0 ? (
+          <div className="text-center py-6 text-nb-text-muted text-sm">暂无归档会话</div>
+        ) : (
+          <div className="space-y-2 max-h-56 overflow-y-auto scrollbar-thin pr-1">
+            {sessions.map(s => (
+              <div key={s.session_id} className="flex items-center gap-3 p-3 bg-nb-card rounded-lg border border-nb-border-soft group">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-nb-text-soft truncate">{s.session_id}</div>
+                  <div className="text-xs text-nb-text-dim mt-0.5">
+                    {s.message_count} 条消息 · 最后活跃 {formatTime(s.last_active)}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDeleteSession(s.session_id)}
+                  className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── L3 Skill Memory Panel ────────────────────────────────────────────────────
+
+function SkillMemoryPanel() {
+  const [skills, setSkills] = useState<{ name: string; filename: string; title: string }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState<{ name: string; content: string } | null>(null)
+  const loadedRef = useRef(false)
+
+  const load = useCallback(async () => {
+    if (loadedRef.current) return
+    loadedRef.current = true
+    setLoading(true)
+    try {
+      const data = await listSkillMemory()
+      setSkills(data.skills)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleDelete = async (name: string) => {
+    if (!confirm(`确认删除技能文档「${name}」？`)) return
+    await deleteSkillMemory(name)
+    setSkills(prev => prev.filter(s => s.name !== name))
+    if (editing?.name === name) setEditing(null)
+  }
+
+  const handleSave = async () => {
+    if (!editing) return
+    const name = editing.name.trim()
+    if (!name) return
+    await saveSkillMemory(name, editing.content)
+    setEditing(null)
+    const data = await listSkillMemory()
+    setSkills(data.skills)
+  }
+
+  const startNew = () => {
+    setEditing({ name: '', content: '# 新技能\n\n在此处描述该技能的使用场景和步骤。\n' })
+  }
+
+  const startEdit = async (name: string) => {
+    const data = await getSkillMemory(name)
+    setEditing({ name: data.name, content: data.content })
+  }
+
+  if (editing) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <input
+            value={editing.name}
+            onChange={e => setEditing({ ...editing, name: e.target.value })}
+            placeholder="技能名称"
+            className="flex-1 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft placeholder:text-nb-text-muted outline-none focus:border-brand-500"
+          />
+          <button
+            onClick={() => setEditing(null)}
+            className="px-3 py-2 rounded-lg border border-nb-border text-sm text-nb-text-soft hover:bg-nb-raised transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!editing.name.trim()}
+            className="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-sm text-white transition-colors"
+          >
+            保存
+          </button>
+        </div>
+        <textarea
+          value={editing.content}
+          onChange={e => setEditing({ ...editing, content: e.target.value })}
+          className="w-full h-80 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft placeholder:text-nb-text-muted outline-none focus:border-brand-500 resize-none font-mono leading-relaxed"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2.5 p-3.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700/30 rounded-xl text-xs text-emerald-700 dark:text-emerald-300">
+        <BookOpen size={14} className="shrink-0 mt-0.5" />
+        <span>技能文档存放于 ~/.nanobot/skills/，Agent 会根据问题自动加载最相关的技能作为参考。</span>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-nb-text-dim">{skills.length} 个技能</div>
+        <button
+          onClick={startNew}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-brand-600 hover:bg-brand-500 text-xs text-white transition-colors"
+        >
+          <Plus size={13} />
+          新建技能
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-nb-text-muted" /></div>
+      ) : skills.length === 0 ? (
+        <div className="text-center py-8 text-nb-text-muted">
+          <BookOpen size={32} className="mx-auto mb-2 opacity-30" />
+          <p className="text-sm">暂无技能文档</p>
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-80 overflow-y-auto scrollbar-thin pr-1">
+          {skills.map(s => (
+            <div key={s.name} className="flex items-center gap-3 p-3 bg-nb-card rounded-lg border border-nb-border-soft group">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-nb-text-soft truncate">{s.title || s.name}</div>
+                <div className="text-xs text-nb-text-dim truncate">{s.filename}</div>
+              </div>
+              <button
+                onClick={() => startEdit(s.name)}
+                className="shrink-0 p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-nb-text transition-colors"
+              >
+                <Edit2 size={13} />
+              </button>
+              <button
+                onClick={() => handleDelete(s.name)}
+                className="shrink-0 p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-red-600 dark:hover:text-red-400 transition-colors"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1692,7 +2002,7 @@ const TABS: { id: Tab; labelKey: string; icon: React.ReactNode }[] = [
   { id: 'cookies',    labelKey: 'settings.cookies',    icon: <Cookie size={15} /> },
 ]
 
-export default function SettingsModal({ open, onClose }: SettingsModalProps) {
+function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { t } = useTranslation()
   const [tab, setTab] = useState<Tab>('model')
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -1758,3 +2068,6 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     </div>
   )
 }
+
+export default memo(SettingsModal)
+
