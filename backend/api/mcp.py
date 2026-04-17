@@ -16,6 +16,12 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 CONFIG_PATH = Path.home() / ".nanobot" / "config.json"
 
+# Dangerous commands that should not be allowed as MCP stdio servers
+_DANGEROUS_COMMANDS = {
+    "rm", "sh", "bash", "zsh", "cmd", "powershell", "python", "python3",
+    "node", "perl", "ruby", "curl", "wget", "nc", "netcat", "telnet",
+}
+
 
 def _read_config() -> dict:
     if CONFIG_PATH.exists():
@@ -105,6 +111,9 @@ async def add_mcp_server(body: MCPServerRequest):
     elif body.type == "stdio":
         if not body.command:
             raise HTTPException(400, "command is required for stdio type")
+        cmd_name = Path(body.command).name.lower()
+        if cmd_name in _DANGEROUS_COMMANDS:
+            raise HTTPException(400, f"Command '{cmd_name}' is not allowed for security reasons")
         spec = {"command": body.command, "args": body.args}
         if body.env:
             spec["env"] = body.env
@@ -136,6 +145,9 @@ async def update_mcp_server(name: str, body: MCPServerRequest):
     else:
         if not body.command:
             raise HTTPException(400, "command is required for stdio type")
+        cmd_name = Path(body.command).name.lower()
+        if cmd_name in _DANGEROUS_COMMANDS:
+            raise HTTPException(400, f"Command '{cmd_name}' is not allowed for security reasons")
         spec = {"command": body.command, "args": body.args}
         if body.env:
             spec["env"] = body.env

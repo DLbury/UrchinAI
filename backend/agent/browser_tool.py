@@ -79,8 +79,28 @@ class BrowserTools:
             return f"滚动失败: {res['error']}"
         return f"已向{direction}滚动 {amount}px"
 
+    # Hosts where arbitrary JS execution is considered high-risk
+    _SENSITIVE_HOST_PATTERNS = {
+        "alipay", "wechatpay", "tenpay", "paypal", "stripe", "bank",
+        "mail", "gmail", "outlook", "yahoo", "163.com", "qq.com",
+        "amazon", "taobao", "tmall", "jd.com", "binance", "coinbase",
+        "kraken", "okx", "huobi", "gate.io", "webull", "robinhood",
+    }
+
     async def browser_evaluate(self, javascript: str) -> str:
-        """在浏览器页面执行 JavaScript。"""
+        """在浏览器页面执行 JavaScript（敏感页面会被拦截）。"""
+        current_url = await self.browser_get_url()
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(current_url).hostname or ""
+            host_lower = host.lower()
+            if any(p in host_lower for p in self._SENSITIVE_HOST_PATTERNS):
+                return (
+                    f"JS 执行被拒绝：当前页面 {host} 属于敏感站点，"
+                    "为避免安全风险，已禁止在此页面执行任意代码。"
+                )
+        except Exception:
+            pass
         res = await _call("POST", "/execute", javascript=javascript)
         if "error" in res:
             return f"JS 执行失败: {res['error']}"

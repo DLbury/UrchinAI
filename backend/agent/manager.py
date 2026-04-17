@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -399,7 +398,7 @@ def _format_llm_error(exc: BaseException, api_base: str | None) -> str:
     return f"模型调用失败：{msg}"
 
 
-def _resolve_litellm_model(model: str, provider_name: str, api_base: str | None, api_key: str) -> str:
+def _resolve_litellm_model(model: str, provider_name: str, api_base: str | None) -> str:
     """Return a LiteLLM-compatible model string for the given config."""
     # If the model already has a provider prefix (e.g. "openai/gpt-4"), use as-is
     if "/" in model:
@@ -430,7 +429,6 @@ def _resolve_litellm_model(model: str, provider_name: str, api_base: str | None,
 
     # Unknown / custom provider with a custom api_base → treat as OpenAI-compat
     if api_base:
-        os.environ["OPENAI_API_KEY"] = api_key
         return f"openai/{model}"
 
     return model
@@ -464,6 +462,7 @@ class AgentManager:
         self._stop_event = asyncio.Event()
         self._session_archive = _SESSION_ARCHIVE
         self._archived_count = 0
+        self._current_stream_task: asyncio.Task | None = None
 
     def _check_nanobot(self) -> bool:
         try:
@@ -476,13 +475,30 @@ class AgentManager:
     def stop(self) -> None:
         """Signal the agent loop to stop as soon as possible."""
         self._stop_event.set()
+        if self._current_stream_task and not self._current_stream_task.done():
+            self._current_stream_task.cancel()
 
     async def _archive_new_turns(self) -> None:
         """Archive any unarchived history turns to the session archive."""
         if len(self._history) <= self._archived_count:
             return
         new_turns = self._history[self._archived_count:]
-        await asyncio.to_thread(self._session_archive.archive_turns, self.session_id, new_turns)
+        # Scrub large base64 images before archiving to keep DB small
+        scrubbed = []
+        for turn in new_turns:
+            content = turn.get("content")
+            if isinstance(content, str) and "data:image/jpeg;base64," in content:
+                turn = {**turn, "content": "[截图已省略]"}
+            elif isinstance(content, list):
+                filtered = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        filtered.append({"type": "text", "text": "[图片已省略]"})
+                    else:
+                        filtered.append(part)
+                turn = {**turn, "content": filtered}
+            scrubbed.append(turn)
+        await asyncio.to_thread(self._session_archive.archive_turns, self.session_id, scrubbed)
         self._archived_count = len(self._history)
 
     async def chat(self, user_message: str, files: list | None = None) -> AsyncGenerator[AgentMessage, None]:
@@ -531,7 +547,7 @@ class AgentManager:
             yield AgentMessage("error", "未找到有效的服务商配置，请在设置中配置 API Key。")
             return
 
-        resolved_model = _resolve_litellm_model(model, provider_name, api_base, api_key)
+        resolved_model = _resolve_litellm_model(model, provider_name, api_base)
         logger.info("Using model: %s (resolved: %s)", model, resolved_model)
         if api_base:
             logger.info("LiteLLM api_base=%s (requests typically go to …/v1/chat/completions)", api_base)
@@ -616,37 +632,73 @@ class AgentManager:
                 finish_reason: str | None = None
 
                 stream = await litellm.acompletion(**call_kwargs)
-                async for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    choice = chunk.choices[0]
-                    delta = choice.delta
-                    if choice.finish_reason:
-                        finish_reason = choice.finish_reason
+                chunk_queue: asyncio.Queue[Any] = asyncio.Queue()
 
-                    # Text tokens
-                    if delta.content:
-                        response_content += delta.content
-                        yield AgentMessage("token", delta.content)
+                async def _pump_stream():
+                    try:
+                        async for chunk in stream:
+                            await chunk_queue.put(chunk)
+                    finally:
+                        await chunk_queue.put(None)  # sentinel
 
-                    # Tool call chunks
-                    if delta.tool_calls:
-                        for tc_chunk in delta.tool_calls:
-                            idx = tc_chunk.index
-                            if idx not in pending_tool_calls:
-                                pending_tool_calls[idx] = {
-                                    "id": tc_chunk.id or "",
-                                    "name": "",
-                                    "args_str": "",
-                                }
-                            entry = pending_tool_calls[idx]
-                            if tc_chunk.id:
-                                entry["id"] = tc_chunk.id
-                            if tc_chunk.function:
-                                if tc_chunk.function.name:
-                                    entry["name"] += tc_chunk.function.name
-                                if tc_chunk.function.arguments:
-                                    entry["args_str"] += tc_chunk.function.arguments
+                self._current_stream_task = asyncio.create_task(_pump_stream())
+
+                try:
+                    while True:
+                        if self._stop_event.is_set():
+                            self._current_stream_task.cancel()
+                            try:
+                                await self._current_stream_task
+                            except asyncio.CancelledError:
+                                pass
+                            break
+
+                        try:
+                            chunk = await asyncio.wait_for(chunk_queue.get(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            continue
+
+                        if chunk is None:
+                            break
+
+                        if not chunk.choices:
+                            continue
+                        choice = chunk.choices[0]
+                        delta = choice.delta
+                        if choice.finish_reason:
+                            finish_reason = choice.finish_reason
+
+                        # Text tokens
+                        if delta.content:
+                            response_content += delta.content
+                            yield AgentMessage("token", delta.content)
+
+                        # Tool call chunks
+                        if delta.tool_calls:
+                            for tc_chunk in delta.tool_calls:
+                                idx = tc_chunk.index
+                                if idx not in pending_tool_calls:
+                                    pending_tool_calls[idx] = {
+                                        "id": tc_chunk.id or "",
+                                        "name": "",
+                                        "args_str": "",
+                                    }
+                                entry = pending_tool_calls[idx]
+                                if tc_chunk.id:
+                                    entry["id"] = tc_chunk.id
+                                if tc_chunk.function:
+                                    if tc_chunk.function.name:
+                                        entry["name"] += tc_chunk.function.name
+                                    if tc_chunk.function.arguments:
+                                        entry["args_str"] += tc_chunk.function.arguments
+                finally:
+                    if self._current_stream_task and not self._current_stream_task.done():
+                        self._current_stream_task.cancel()
+                        try:
+                            await self._current_stream_task
+                        except asyncio.CancelledError:
+                            pass
+                    self._current_stream_task = None
 
                 logger.info("Iteration %d finish_reason=%s pending_tools=%d", iteration + 1, finish_reason, len(pending_tool_calls))
 

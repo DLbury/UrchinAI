@@ -122,8 +122,21 @@ async def install_skill(body: InstallSkillRequest):
                     skill_content = zf.read(skill_md_path).decode('utf-8')
                     (skill_dir / "skill.md").write_text(skill_content)
                 else:
-                    # If no skill.md found, extract all files
-                    zf.extractall(skill_dir)
+                    # If no skill.md found, extract all files safely (prevent Zip Slip)
+                    for member in zf.infolist():
+                        member_path = Path(member.filename)
+                        # Reject absolute paths and parent directory references
+                        if member_path.is_absolute() or '..' in member_path.parts:
+                            logger.warning(f"Skipping unsafe zip entry: {member.filename}")
+                            continue
+                        target = skill_dir / member_path
+                        # Ensure the target path stays within skill_dir
+                        try:
+                            target.relative_to(skill_dir)
+                        except ValueError:
+                            logger.warning(f"Skipping zip entry outside target directory: {member.filename}")
+                            continue
+                        zf.extract(member, skill_dir)
             logger.info(f"Skill installed successfully from zip: {skill_name}")
         else:
             # Handle plain markdown file
