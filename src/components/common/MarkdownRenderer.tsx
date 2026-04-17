@@ -4,6 +4,21 @@ import { X } from 'lucide-react'
 import { useTheme } from '../../hooks/useTheme'
 import 'streamdown/styles.css'
 
+function sanitizeTableHtml(html: string): string {
+  if (typeof window === 'undefined') return html
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  doc.querySelectorAll('script, style').forEach((el) => el.remove())
+  doc.querySelectorAll('*').forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name.toLowerCase().startsWith('on')) {
+        el.removeAttribute(attr.name)
+      }
+    }
+  })
+  return doc.body.innerHTML
+}
+
 interface MarkdownRendererProps {
   content: string
   className?: string
@@ -109,7 +124,7 @@ function TableModal({ tableHtml, onClose, isDark }: TableModalProps) {
             .modal-table td { color: ${styles.tdText}; background-color: ${styles.tdBg}; }
             .modal-table tr:hover td { background-color: ${styles.trHover} !important; }
           `}</style>
-          <div dangerouslySetInnerHTML={{ __html: tableHtml.replace(/<table/g, '<table class="modal-table"') }} />
+          <div dangerouslySetInnerHTML={{ __html: sanitizeTableHtml(tableHtml).replace(/<table/g, '<table class="modal-table"') }} />
         </div>
       </div>
     </div>

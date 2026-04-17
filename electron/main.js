@@ -520,10 +520,20 @@ function focusedOrMainShell() {
   return BrowserWindow.getFocusedWindow() || mainWindow
 }
 
+function isAllowedBridgeOrigin(origin) {
+  if (!origin) return false
+  return origin.startsWith('app://') ||
+    origin.startsWith('http://localhost:') ||
+    origin.startsWith('http://127.0.0.1:')
+}
+
 function startBridgeServer() {
   const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json')
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    const origin = req.headers.origin || ''
+    if (isAllowedBridgeOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+    }
 
     // Tab-management endpoints don't need an active wc
     const noWcNeeded = ['/tabs', '/new-tab', '/close-tab', '/switch-tab']
@@ -534,7 +544,13 @@ function startBridgeServer() {
     }
 
     let body = ''
-    req.on('data', d => { body += d })
+    const MAX_BODY = 10 * 1024 * 1024 // 10 MB
+    req.on('data', d => {
+      body += d
+      if (body.length > MAX_BODY) {
+        req.destroy()
+      }
+    })
     req.on('end', async () => {
       let data = {}
       try { data = JSON.parse(body || '{}') } catch (_) {}
@@ -542,6 +558,9 @@ function startBridgeServer() {
       try {
         // ── Navigation ──────────────────────────────────────────────────
         if (req.method === 'POST' && req.url === '/navigate') {
+          if (!isSafeHttpUrl(data.url)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: 'invalid url' })); return
+          }
           try {
             await wc.loadURL(data.url)
           } catch (e) {
@@ -1514,7 +1533,17 @@ function registerIpc() {
     return { tabs: tabsWithContent, total: tabsWithContent.length }
   })
 
-  ipcMain.handle('shell:openExternal', (_e, url) => shell.openExternal(url))
+  ipcMain.handle('shell:openExternal', (_e, url) => {
+    try {
+      const u = new URL(url)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'mailto:') {
+        throw new Error('disallowed protocol')
+      }
+    } catch {
+      return Promise.reject(new Error('Invalid URL'))
+    }
+    return shell.openExternal(url)
+  })
 
   // API proxy: renderer → main → backend (bypasses CORS from app:// origin)
   ipcMain.handle('api:request', async (_e, { method, path, body }) => {
@@ -1779,7 +1808,7 @@ function registerIpc() {
 
           // Send result via custom event that Electron can capture
           window.__domPickerResult = info;
-          window.postMessage({ type: '__DOM_PICKER_RESULT', data: info }, '*');
+          window.postMessage({ type: '__DOM_PICKER_RESULT', data: info }, window.location.origin);
 
           // 自动停止选取模式（一次性），但不销毁实例以保留已选元素状态
           setTimeout(() => {
@@ -1795,7 +1824,7 @@ function registerIpc() {
           e.stopImmediatePropagation();
 
           // 右键退出选取模式
-          window.postMessage({ type: '__DOM_PICKER_CANCELLED' }, '*');
+          window.postMessage({ type: '__DOM_PICKER_CANCELLED' }, window.location.origin);
           this.stop();
 
           return false;
@@ -1950,7 +1979,7 @@ function registerIpc() {
     await wc.executeJavaScript(`
       (function() {
         if (window.__domPicker) {
-          window.__domPicker.removeBadgeByNumber(${badgeNumber});
+          window.__domPicker.removeBadgeByNumber(${JSON.stringify(badgeNumber)});
         }
       })()
     `).catch(() => {})

@@ -369,6 +369,14 @@ def _normalize_litellm_api_base(raw: str | None) -> str | None:
     s = str(raw).strip()
     if not s:
         return None
+    # Only allow http/https to prevent SSRF via arbitrary apiBase values
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(s)
+        if parsed.scheme not in ("http", "https"):
+            return None
+    except Exception:
+        return None
     return s.rstrip("/")
 
 
