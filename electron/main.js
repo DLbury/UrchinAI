@@ -483,6 +483,15 @@ function stopBackend() {
 
 // ─── HTTP bridge (Python → webview control) ──────────────────────────────────
 
+function isSafeHttpUrl(url) {
+  try {
+    const u = new URL(url)
+    return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'about:'
+  } catch {
+    return false
+  }
+}
+
 function getActiveWc() {
   const focused = BrowserWindow.getFocusedWindow() || mainWindow
   const rendererWcId = focused?.webContents?.id
@@ -1215,20 +1224,26 @@ function registerIpc() {
   // Listen for found-in-page events from all webviews and forward to renderer
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() === 'webview') {
-      contents.on('found-in-page', (event, result) => {
+      const onFoundInPage = (_event, result) => {
         // Forward to all windows (simplified) or track which window owns this webview
         BrowserWindow.getAllWindows().forEach(win => {
           win.webContents.send('webview:foundInPage', result)
         })
-      })
-      // Ctrl/Cmd+F is consumed by the webview guest; forward find UI to the host window.
-      contents.on('before-input-event', (event, input) => {
+      }
+      const onBeforeInput = (event, input) => {
+        // Ctrl/Cmd+F is consumed by the webview guest; forward find UI to the host window.
         if ((input.control || input.meta) && input.key.toLowerCase() === 'f') {
           event.preventDefault()
           const hostWin = BrowserWindow.fromWebContents(contents)
             || (contents.hostWebContents && BrowserWindow.fromWebContents(contents.hostWebContents))
           if (hostWin && !hostWin.isDestroyed()) hostWin.webContents.send('shortcut:find')
         }
+      }
+      contents.on('found-in-page', onFoundInPage)
+      contents.on('before-input-event', onBeforeInput)
+      contents.once('destroyed', () => {
+        contents.removeListener('found-in-page', onFoundInPage)
+        contents.removeListener('before-input-event', onBeforeInput)
       })
     }
   })
@@ -1318,11 +1333,17 @@ function registerIpc() {
     }
 
     // Link actions
-    if (p.linkURL) {
+    if (p.linkURL && isSafeHttpUrl(p.linkURL)) {
       template.push(
         { label: '在新标签页中打开链接', click: () => shell?.webContents?.send('cmd:newTab', p.linkURL) },
         { label: '在当前标签页中打开',   click: () => wc?.loadURL(p.linkURL)  },
         { label: '复制链接地址',          click: () => clipboard.writeText(p.linkURL) },
+        { type: 'separator' },
+      )
+    } else if (p.linkURL) {
+      // Unsafe protocol: only allow copy
+      template.push(
+        { label: '复制链接地址', click: () => clipboard.writeText(p.linkURL) },
         { type: 'separator' },
       )
     }
@@ -1387,7 +1408,7 @@ function registerIpc() {
         nodeIntegration: false,
         webviewTag: true,
         partition: NANOBOT_PARTITION,  // share session so localStorage is synced
-        ...(isDev ? {} : { webSecurity: false }),
+        // Security: keep webSecurity enabled in all environments
       },
     })
     attachRendererShortcuts(win)
@@ -1635,8 +1656,9 @@ function registerIpc() {
           // 从数组中移除
           this.pickedElements.splice(index, 1);
 
-          // 重新编号剩余的 badges
+          // 重新编号剩余的 badges（只重排被删除位置之后的）
           this.pickedElements.forEach((el, idx) => {
+            if (idx < index) return;
             const oldBadge = document.getElementById('__dom-picked-badge-' + (idx + 2));
             if (oldBadge) {
               oldBadge.id = '__dom-picked-badge-' + (idx + 1);
@@ -1983,7 +2005,7 @@ function createWindow() {
       nodeIntegration: false,
       webviewTag: true,
       partition: NANOBOT_PARTITION,
-      ...(isDev ? {} : { webSecurity: false }),
+      // Security: keep webSecurity enabled in all environments
     },
   })
 
@@ -2001,7 +2023,8 @@ function createWindow() {
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
-app.commandLine.appendSwitch('no-sandbox')
+// Security: keep sandbox enabled. Do not use no-sandbox unless absolutely
+// necessary for a specific platform bug, and then only as a last resort.
 
 // Crash handling
 process.on('uncaughtException', (err) => {
@@ -2033,6 +2056,7 @@ if (process.platform === 'linux') {
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() === 'webview') {
     contents.setWindowOpenHandler(({ url }) => {
+      if (!isSafeHttpUrl(url)) return { action: 'deny' }
       const win = browserWindowForPageContents(contents) || mainWindow
       win?.webContents?.send('cmd:newTab', url)
       return { action: 'deny' }
@@ -2093,18 +2117,22 @@ app.whenReady().then(async () => {
 
   // Configure CORS and network settings for the session
   const configureSession = (sess) => {
-    // Allow all CORS requests and WebSocket connections
+    // Only inject CSP for our local app:// protocol; do not weaken CSP for external sites.
     sess.webRequest.onHeadersReceived((details, callback) => {
+      if (!details.url.startsWith('app://')) {
+        callback({ responseHeaders: details.responseHeaders })
+        return
+      }
       callback({
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
-            "connect-src * ws: wss: http: https:;",
-            "script-src * 'unsafe-inline' 'unsafe-eval' blob:;",
-            "style-src * 'unsafe-inline' blob:;",
-            "img-src * data: blob: https: http:;",
-            "font-src * data: blob:;"
+            "default-src 'self';",
+            "connect-src 'self' ws: wss: http: https:;",
+            "script-src 'self' 'unsafe-inline';",
+            "style-src 'self' 'unsafe-inline';",
+            "img-src 'self' data: blob: https: http:;",
+            "font-src 'self' data:;"
           ].join(' ')
         }
       })

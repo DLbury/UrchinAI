@@ -1,7 +1,9 @@
 """AI memory API — unified management for L1/L2/L3 memory layers."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+import re
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agent.memory import get_prompt_memory, get_session_archive, get_skill_memory
@@ -11,6 +13,15 @@ router = APIRouter(prefix="/api/memory")
 _prompt_memory = get_prompt_memory()
 _session_archive = get_session_archive()
 _skill_memory = get_skill_memory()
+
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _sanitize_name(name: str) -> str:
+    name = name.strip()
+    if not _SAFE_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid name: only a-z, A-Z, 0-9, _, - are allowed")
+    return name
 
 
 # ── L1 Prompt Memory ─────────────────────────────────────────────────────────
@@ -94,17 +105,19 @@ def get_skill(name: str):
 def save_skill(item: SkillItem):
     from pathlib import Path
 
+    name = _sanitize_name(item.name)
     skills_dir = _skill_memory._skills_dir
     skills_dir.mkdir(parents=True, exist_ok=True)
-    path = skills_dir / f"{item.name.strip()}.md"
+    path = skills_dir / f"{name}.md"
     path.write_text(item.content, encoding="utf-8")
-    return {"ok": True, "name": item.name.strip()}
+    return {"ok": True, "name": name}
 
 
 @router.delete("/skills/{name}")
 def delete_skill(name: str):
     from pathlib import Path
 
+    name = _sanitize_name(name)
     path = _skill_memory._skills_dir / f"{name}.md"
     if path.exists():
         path.unlink()

@@ -795,6 +795,7 @@ class AgentManager:
         if self._history and self._history[-1]["role"] == "assistant" and isinstance(self._history[-1].get("content"), str):
             final_content = self._history[-1]["content"]
         await self._archive_new_turns()
+        self._truncate_history()
         yield AgentMessage("done", final_content)
 
     async def _fallback_chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
@@ -809,23 +810,37 @@ class AgentManager:
             await asyncio.sleep(0.02)
         self._history.append({"role": "assistant", "content": reply})
         await self._archive_new_turns()
+        self._truncate_history()
         yield AgentMessage("done", reply)
 
     def clear_history(self) -> None:
         self._history.clear()
 
+    def _truncate_history(self, max_messages: int = 100) -> None:
+        """Truncate internal history to avoid unbounded memory growth."""
+        if len(self._history) > max_messages:
+            dropped = len(self._history) - max_messages
+            self._history = self._history[dropped:]
+            self._archived_count = max(0, self._archived_count - dropped)
+            logger.info("Truncated %d oldest history entries", dropped)
+
 
 # Per-session manager registry
 _managers: dict[str, AgentManager] = {}
+_managers_lock = asyncio.Lock()
 
 
-def get_or_create_manager(session_id: str, browser_page=None) -> AgentManager:
-    if session_id not in _managers:
-        _managers[session_id] = AgentManager(session_id, browser_page)
-    elif browser_page is not None:
-        _managers[session_id].browser_page = browser_page
-    return _managers[session_id]
+async def get_or_create_manager(session_id: str, browser_page=None) -> AgentManager:
+    async with _managers_lock:
+        if session_id not in _managers:
+            _managers[session_id] = AgentManager(session_id, browser_page)
+        elif browser_page is not None:
+            _managers[session_id].browser_page = browser_page
+        return _managers[session_id]
 
 
-def remove_manager(session_id: str) -> None:
-    _managers.pop(session_id, None)
+async def remove_manager(session_id: str) -> None:
+    async with _managers_lock:
+        mgr = _managers.pop(session_id, None)
+    if mgr is not None:
+        mgr.stop()

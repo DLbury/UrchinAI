@@ -8,6 +8,7 @@ Skill Memory (L3) — Procedural memory as markdown documents.
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -21,24 +22,50 @@ class SkillMemory:
     def __init__(self, skills_dir: Path | None = None) -> None:
         self._skills_dir = skills_dir or SKILLS_DIR
         self._skills_dir.mkdir(parents=True, exist_ok=True)
+        self._cache: dict[str, str] = {}
+        self._mtimes: dict[str, float] = {}
+
+    def _read_skills(self) -> dict[str, str]:
+        """Read all skills from disk, using mtime cache to avoid unnecessary IO."""
+        skills: dict[str, str] = {}
+        for path in sorted(self._skills_dir.glob("*.md")):
+            name = path.stem
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            if self._mtimes.get(name) != mtime:
+                try:
+                    self._cache[name] = path.read_text(encoding="utf-8")
+                    self._mtimes[name] = mtime
+                except Exception:
+                    continue
+            skills[name] = self._cache.get(name, "")
+        # Clean up deleted files
+        for name in list(self._cache.keys()):
+            if name not in skills:
+                self._cache.pop(name, None)
+                self._mtimes.pop(name, None)
+        return skills
 
     def list_skills(self) -> list[dict[str, Any]]:
         """Return metadata for all available skills."""
         skills = []
-        for path in sorted(self._skills_dir.glob("*.md")):
+        for name, text in self._read_skills().items():
+            title = _extract_title_from_text(text) or name
             skills.append({
-                "name": path.stem,
-                "filename": path.name,
-                "title": _extract_title(path),
+                "name": name,
+                "filename": f"{name}.md",
+                "title": title,
             })
         return skills
 
     def load_skill(self, name: str) -> str:
         """Load the full content of a skill by name."""
-        path = self._skills_dir / f"{name}.md"
-        if not path.exists():
+        skills = self._read_skills()
+        if name not in skills:
             return f"Skill '{name}' not found."
-        return path.read_text(encoding="utf-8")
+        return skills[name]
 
     def retrieve_relevant(self, query: str, top_k: int = 2) -> list[tuple[str, str]]:
         """Return top-k (name, content) skills most relevant to the query."""
@@ -47,9 +74,7 @@ class SkillMemory:
             return []
 
         scored = []
-        for path in self._skills_dir.glob("*.md"):
-            name = path.stem
-            text = path.read_text(encoding="utf-8")
+        for name, text in self._read_skills().items():
             skill_tokens = set(_tokenize(name) + _tokenize(text))
             score = len(query_tokens & skill_tokens)
             if score > 0:
@@ -59,16 +84,12 @@ class SkillMemory:
         return [(name, text) for _, name, text in scored[:top_k]]
 
 
-def _extract_title(path: Path) -> str:
-    """Extract the first H1 from a markdown file, or fallback to stem."""
-    try:
-        text = path.read_text(encoding="utf-8")
-        m = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
-        if m:
-            return m.group(1).strip()
-    except Exception:
-        pass
-    return path.stem
+def _extract_title_from_text(text: str) -> str | None:
+    """Extract the first H1 from markdown text, or return None."""
+    m = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+    if m:
+        return m.group(1).strip()
+    return None
 
 
 def _tokenize(text: str) -> list[str]:

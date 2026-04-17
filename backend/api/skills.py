@@ -138,9 +138,12 @@ async def install_skill(body: InstallSkillRequest):
 
 @router.delete("/{skill_id}")
 async def delete_skill(skill_id: str):
-    skill_dir = SKILLS_DIR / skill_id
+    skill_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in skill_id)[:64]
+    if not skill_name or skill_name != skill_id.strip():
+        raise HTTPException(400, "Invalid skill id")
+    skill_dir = SKILLS_DIR / skill_name
     if not skill_dir.exists() or not skill_dir.is_dir():
-        raise HTTPException(404, f"Skill '{skill_id}' not found")
+        raise HTTPException(404, f"Skill '{skill_name}' not found")
 
     import shutil
     shutil.rmtree(skill_dir)

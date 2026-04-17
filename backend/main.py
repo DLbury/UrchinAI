@@ -76,8 +76,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         return
 
     try:
-        from agent.manager import get_or_create_manager
-        manager = get_or_create_manager(session_id)
+        from agent.manager import get_or_create_manager, remove_manager
+        manager = await get_or_create_manager(session_id)
         logger.info("Manager created for session: %s", session_id)
     except Exception as e:
         logger.error("Failed to create manager for session %s: %s", session_id, e)
@@ -118,14 +118,18 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     continue
 
                 async with chat_lock:
-                    if chat_task and not chat_task.done():
-                        chat_task.cancel()
-                        manager.stop()
-                        try:
-                            await chat_task
-                        except asyncio.CancelledError:
-                            pass
-                        chat_task = None
+                    old_task = chat_task
+
+                if old_task and not old_task.done():
+                    old_task.cancel()
+                    manager.stop()
+                    try:
+                        await old_task
+                    except asyncio.CancelledError:
+                        pass
+
+                async with chat_lock:
+                    chat_task = None
 
                 async def send_chat():
                     async for msg in manager.chat(content, files=files):
@@ -137,15 +141,20 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             elif msg_type == "stop":
                 # 停止当前生成
                 async with chat_lock:
-                    if chat_task and not chat_task.done():
-                        chat_task.cancel()
-                        manager.stop()
-                        logger.info("Stop requested for session: %s", session_id)
-                        try:
-                            await chat_task
-                        except asyncio.CancelledError:
-                            pass
-                        chat_task = None
+                    old_task = chat_task
+
+                if old_task and not old_task.done():
+                    old_task.cancel()
+                    manager.stop()
+                    logger.info("Stop requested for session: %s", session_id)
+                    try:
+                        await old_task
+                    except asyncio.CancelledError:
+                        pass
+
+                async with chat_lock:
+                    chat_task = None
+
                 await websocket.send_text(json.dumps({"type": "stopped"}))
 
             elif msg_type == "clear_history":
@@ -160,6 +169,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         if chat_task and not chat_task.done():
             chat_task.cancel()
             manager.stop()
+        try:
+            await remove_manager(session_id)
+        except Exception as e:
+            logger.error("Failed to remove manager for session %s: %s", session_id, e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

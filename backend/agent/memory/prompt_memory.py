@@ -9,12 +9,15 @@ Prompt Memory (L1) — Hermes-style frozen snapshot memory.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 MEMORY_FILE = Path.home() / ".nanobot" / "memory.json"
+logger = logging.getLogger(__name__)
 
 
 class PromptMemory:
@@ -22,6 +25,8 @@ class PromptMemory:
 
     def __init__(self) -> None:
         self._entries: list[dict[str, Any]] = []
+        self._save_timer: threading.Timer | None = None
+        self._lock = threading.Lock()
         self._load()
 
     def _load(self) -> None:
@@ -44,12 +49,26 @@ class PromptMemory:
                             "tags": [],
                         })
                 self._entries = migrated
-        except Exception:
+        except Exception as e:
+            logger.error("Failed to load prompt memory: %s", e)
             self._entries = []
 
+    def _schedule_save(self) -> None:
+        with self._lock:
+            if self._save_timer:
+                self._save_timer.cancel()
+            self._save_timer = threading.Timer(0.5, self._save)
+            self._save_timer.start()
+
     def _save(self) -> None:
-        MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_FILE.write_text(json.dumps(self._entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            timer = self._save_timer
+            self._save_timer = None
+        try:
+            MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            MEMORY_FILE.write_text(json.dumps(self._entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.error("Failed to save prompt memory: %s", e)
 
     def list_all(self) -> list[dict[str, Any]]:
         return [dict(e) for e in self._entries]
@@ -62,20 +81,20 @@ class PromptMemory:
             "tags": tags or [],
         }
         self._entries.append(entry)
-        self._save()
+        self._schedule_save()
         return entry
 
     def remove(self, entry_id: str) -> bool:
         before = len(self._entries)
         self._entries = [e for e in self._entries if e.get("id") != entry_id]
         if len(self._entries) < before:
-            self._save()
+            self._schedule_save()
             return True
         return False
 
     def clear(self) -> None:
         self._entries = []
-        self._save()
+        self._schedule_save()
 
     def retrieve_relevant(self, query: str, top_k: int = 3) -> list[str]:
         """Return top-k memory contents most relevant to the query."""

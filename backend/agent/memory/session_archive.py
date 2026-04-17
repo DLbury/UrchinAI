@@ -25,6 +25,8 @@ class SessionArchive:
 
     def _init_db(self) -> None:
         with sqlite3.connect(self._db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
