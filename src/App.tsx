@@ -602,9 +602,18 @@ export default function App() {
         msgs[s.id] = (s.messages || []) as ChatMessage[]
       }
       if (loadedSessions.length > 0) {
-        setChatSessions(loadedSessions as ChatSession[])
-        setChatMessagesBySession(msgs)
-        setCurrentChatSessionId(data.currentSessionId || loadedSessions[0].id)
+        const currentId = data.currentSessionId || loadedSessions[0].id
+        const currentMsgs = msgs[currentId] || []
+        if (currentMsgs.length > 0) {
+          const newSession: ChatSession = { id: uuidv4(), name: `会话 ${loadedSessions.length + 1}`, createdAt: Date.now(), messages: [] }
+          setChatSessions([newSession, ...loadedSessions] as ChatSession[])
+          setChatMessagesBySession({ ...msgs, [newSession.id]: [] })
+          setCurrentChatSessionId(newSession.id)
+        } else {
+          setChatSessions(loadedSessions as ChatSession[])
+          setChatMessagesBySession(msgs)
+          setCurrentChatSessionId(currentId)
+        }
       } else {
         const defaultSession: ChatSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
         setChatSessions([defaultSession])
@@ -804,12 +813,8 @@ export default function App() {
   }, [])
 
   const createTab = useCallback((url = '') => {
-    const msgs = chatMessagesBySession[currentChatSessionId]
-    if (msgs && msgs.length > 0) {
-      handleNewSession()
-    }
     return createTabCore(url)
-  }, [chatMessagesBySession, currentChatSessionId, handleNewSession, createTabCore])
+  }, [createTabCore])
   const createTabRef = useRef(createTab)
   createTabRef.current = createTab
 
