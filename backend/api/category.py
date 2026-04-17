@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agent.categorizer import DEFAULT_CATEGORIES
+from utils import atomic_write_json
 
 CATEGORIES_FILE = Path.home() / ".nanobot" / "categories.json"
 router = APIRouter(prefix="/api/categories", tags=["categories"])
@@ -29,10 +30,7 @@ def _load() -> dict:
 
 def _save(data: dict) -> None:
     """Save categories configuration."""
-    CATEGORIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CATEGORIES_FILE.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    atomic_write_json(CATEGORIES_FILE, data)
 
 
 def get_all_categories() -> list[dict]:

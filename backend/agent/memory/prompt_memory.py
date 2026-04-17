@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from utils import atomic_write_json
+
 MEMORY_FILE = Path.home() / ".nanobot" / "memory.json"
 logger = logging.getLogger(__name__)
 
@@ -65,8 +67,7 @@ class PromptMemory:
             timer = self._save_timer
             self._save_timer = None
         try:
-            MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            MEMORY_FILE.write_text(json.dumps(self._entries, ensure_ascii=False, indent=2), encoding="utf-8")
+            atomic_write_json(MEMORY_FILE, self._entries)
         except Exception as e:
             logger.error("Failed to save prompt memory: %s", e)
 

@@ -8,6 +8,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from utils import atomic_write_json
+
 router = APIRouter(prefix="/api/chat-sessions")
 
 CHAT_SESSIONS_FILE = Path.home() / ".nanobot" / "chat_sessions.json"
@@ -49,11 +51,7 @@ def _load() -> ChatSessionsState:
 
 
 def _save(state: ChatSessionsState) -> None:
-    CHAT_SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHAT_SESSIONS_FILE.write_text(
-        json.dumps(state.model_dump(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    atomic_write_json(CHAT_SESSIONS_FILE, state.model_dump())
 
 
 @router.get("", response_model=ChatSessionsState)

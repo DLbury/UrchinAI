@@ -8,6 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from utils import atomic_write_json
+
 SCRIPTS_FILE = Path.home() / ".nanobot" / "scripts.json"
 router = APIRouter(prefix="/api/scripts")
 
@@ -30,8 +32,7 @@ def _load() -> list[dict]:
 
 
 def _save(data: list[dict]) -> None:
-    SCRIPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SCRIPTS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(SCRIPTS_FILE, data)
 
 
 class ScriptCreate(BaseModel):

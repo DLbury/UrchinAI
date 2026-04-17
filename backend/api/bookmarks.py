@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from api.category import get_all_categories
 from agent.categorizer import categorize_bookmark
+from utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,7 @@ def _load() -> list[dict]:
 
 
 def _save(data: list[dict]) -> None:
-    BOOKMARKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BOOKMARKS_FILE.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    atomic_write_json(BOOKMARKS_FILE, data)
 
 
 class BookmarkCreate(BaseModel):

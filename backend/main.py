@@ -51,6 +51,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Input size limits for WebSocket chat messages
+MAX_MESSAGE_LENGTH = 10000
+MAX_FILES_COUNT = 10
+MAX_FILE_DATA_LENGTH = 5 * 1024 * 1024  # 5 MB base64
+
 app.include_router(config_router)
 app.include_router(skills_router)
 app.include_router(mcp_router)
@@ -112,10 +117,22 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if msg_type == "chat":
                 content = data.get("content", "").strip()
                 files = data.get("files", [])
-                logger.info("[DEBUG] chat message received: content='%s', files_count=%d, files=%s",
-                            content[:100] if content else "", len(files) if files else 0, files[:1] if files else "none")
+                # Log file count but never the actual base64 payload
+                logger.info("[DEBUG] chat message received: content='%s', files_count=%d",
+                            content[:100] if content else "", len(files) if files else 0)
                 if not content and not files:
                     continue
+                if len(content) > MAX_MESSAGE_LENGTH:
+                    await websocket.send_text(json.dumps({"type": "error", "message": "Message too long"}))
+                    continue
+                if len(files) > MAX_FILES_COUNT:
+                    await websocket.send_text(json.dumps({"type": "error", "message": "Too many files"}))
+                    continue
+                for f in files:
+                    data_len = len(f.get("data", ""))
+                    if data_len > MAX_FILE_DATA_LENGTH:
+                        await websocket.send_text(json.dumps({"type": "error", "message": "File too large"}))
+                        continue
 
                 async with chat_lock:
                     old_task = chat_task

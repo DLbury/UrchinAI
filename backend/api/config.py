@@ -15,6 +15,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from utils import atomic_write_json
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -62,9 +64,7 @@ def _read_config() -> dict:
 
 
 def _write_config(data: dict) -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    atomic_write_json(CONFIG_PATH, data)
 
 
 @router.get("")
