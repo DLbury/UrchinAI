@@ -63,6 +63,14 @@ async def install_skill(body: InstallSkillRequest):
     if not url:
         raise HTTPException(400, "url is required")
 
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(400, "Only http and https URLs are allowed")
+    except Exception:
+        raise HTTPException(400, "Invalid URL")
+
     is_zip = url.endswith('.zip')
 
     try:

@@ -1069,7 +1069,11 @@ function startBridgeServer() {
 
         // ── Tab: new ────────────────────────────────────────────────────
         } else if (req.method === 'POST' && req.url === '/new-tab') {
-          focusedOrMainShell()?.webContents?.send('cmd:newTab', data.url || '')
+          const tabUrl = data.url || ''
+          if (tabUrl && !isSafeHttpUrl(tabUrl)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: 'invalid url' })); return
+          }
+          focusedOrMainShell()?.webContents?.send('cmd:newTab', tabUrl)
           res.end(JSON.stringify({ ok: true }))
 
         // ── Tab: close ──────────────────────────────────────────────────

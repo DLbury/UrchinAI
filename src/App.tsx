@@ -867,6 +867,14 @@ export default function App() {
       else setTabs(prev => prev.map(t => t.id === activeIdRef.current ? { ...t, src: url } : t))
       return
     }
+    // Block dangerous protocols that could read local files or execute code
+    try {
+      const u = new URL(url)
+      const allowed = ['http:', 'https:', 'ftp:', 'blob:', 'data:']
+      if (!allowed.includes(u.protocol)) return
+    } catch {
+      // not a full URL - will be handled below
+    }
     if (!/^[a-z][a-z\d+\-.]*:\/\//i.test(url)) {
       if (url.includes('.') && !url.includes(' ')) url = 'https://' + url
       else {
