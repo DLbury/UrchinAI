@@ -1339,11 +1339,49 @@ function registerIpc() {
     }
   })
 
+  // Get cookies for a specific URL
+  ipcMain.handle('cookies:getForUrl', async (_e, url) => {
+    const ses = electronSession.defaultSession
+    try {
+      return await ses.cookies.get({ url })
+    } catch (e) {
+      return []
+    }
+  })
+
+  // Clear site data (cookies + storage) for a specific origin
+  ipcMain.handle('storage:clearSiteData', async (_e, url) => {
+    const ses = electronSession.defaultSession
+    try {
+      await ses.clearStorageData({
+        origin: url,
+        storages: ['appcache', 'cookies', 'filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage']
+      })
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  })
+
   // Right-click context menu for webview content
-  ipcMain.handle('context-menu:show', (e, p) => {
+  ipcMain.handle('context-menu:show', async (e, p) => {
     const shell = BrowserWindow.fromWebContents(e.sender)
     const wc = getActiveWc()
     const template = []
+
+    // Save current selection range before the menu steals focus
+    if (p.selectionText && wc) {
+      try {
+        await wc.executeJavaScript(`
+          (function() {
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount) {
+              window.__nanobotTranslateRange = sel.getRangeAt(0).cloneRange();
+            }
+          })();
+        `)
+      } catch (_) {}
+    }
 
     // Navigation (only for webview)
     if (wc) {
@@ -1373,11 +1411,18 @@ function registerIpc() {
 
     // Image actions
     if (p.srcURL && p.mediaType === 'image') {
-      template.push(
-        { label: '在新标签页中打开图片', click: () => shell?.webContents?.send('cmd:newTab', p.srcURL) },
-        { label: '复制图片地址',          click: () => clipboard.writeText(p.srcURL) },
-        { type: 'separator' },
-      )
+      if (isSafeHttpUrl(p.srcURL)) {
+        template.push(
+          { label: '在新标签页中打开图片', click: () => shell?.webContents?.send('cmd:newTab', p.srcURL) },
+          { label: '复制图片地址',          click: () => clipboard.writeText(p.srcURL) },
+          { type: 'separator' },
+        )
+      } else {
+        template.push(
+          { label: '复制图片地址', click: () => clipboard.writeText(p.srcURL) },
+          { type: 'separator' },
+        )
+      }
     }
 
     // Text selection
@@ -1390,6 +1435,8 @@ function registerIpc() {
             `https://www.google.com/search?q=${encodeURIComponent(p.selectionText.trim())}`) },
         { label: '问 UrchinAI',
           click: () => shell?.webContents?.send('cmd:askAI', p.selectionText.trim()) },
+        { label: '翻译',
+          click: () => shell?.webContents?.send('cmd:translate', p.selectionText.trim()) },
         { type: 'separator' },
       )
     }
@@ -1415,8 +1462,82 @@ function registerIpc() {
     if (shell) Menu.buildFromTemplate(template).popup({ window: shell })
   })
 
+  // Show translation result inside the active webview (replace selection, keep structure when possible)
+  ipcMain.handle('translate:showResult', async (_e, originalText, translatedText) => {
+    const wc = getActiveWc()
+    if (!wc) {
+      console.error('[translate:showResult] no active webview')
+      throw new Error('no active webview')
+    }
+    const safeTranslated = JSON.stringify(translatedText).slice(1, -1)
+    const script = `
+      (function() {
+        const CLASS_NAME = 'nanobot-translate-inline';
+
+        function restoreAll() {
+          document.querySelectorAll('.' + CLASS_NAME).forEach(function(el) {
+            const parent = el.parentNode;
+            if (!parent) return;
+            const original = el.getAttribute('data-original');
+            if (original) {
+              const text = document.createTextNode(original);
+              parent.replaceChild(text, el);
+            } else {
+              el.remove();
+            }
+          });
+        }
+        restoreAll();
+
+        // Use the saved range from context-menu (before focus was stolen)
+        let range = window.__nanobotTranslateRange;
+        delete window.__nanobotTranslateRange;
+
+        if (!range) {
+          const sel = window.getSelection();
+          if (!sel || !sel.rangeCount) return;
+          range = sel.getRangeAt(0);
+        }
+
+        const originalText = range.toString();
+        const translatedText = '${safeTranslated}';
+
+        const span = document.createElement('span');
+        span.className = CLASS_NAME;
+        span.setAttribute('data-original', originalText);
+        span.textContent = translatedText;
+        span.title = '点击恢复原文';
+        span.style.cssText = 'cursor:pointer;';
+
+        span.addEventListener('click', function(e) {
+          e.stopPropagation();
+          const parent = span.parentNode;
+          if (!parent) return;
+          const text = document.createTextNode(originalText);
+          parent.replaceChild(text, span);
+        });
+
+        try {
+          range.surroundContents(span);
+        } catch (err) {
+          range.deleteContents();
+          range.insertNode(span);
+        }
+      })();
+    `
+    try {
+      await wc.executeJavaScript(script)
+    } catch (e) {
+      console.error('[translate:showResult] failed:', e)
+      throw e
+    }
+  })
+
   // Detach tab → open as new Electron window
   ipcMain.handle('tab:detach', (_e, url, sx, sy, theme) => {
+    if (!isSafeHttpUrl(url)) {
+      throw new Error('Invalid URL protocol for detach')
+    }
     const win = new BrowserWindow({
       width: 1300, height: 860, minWidth: 900, minHeight: 600,
       x: Math.max(0, (sx || 100) - 30), y: Math.max(0, (sy || 100) - 15),
@@ -1444,6 +1565,10 @@ function registerIpc() {
     }
     win.webContents.once('did-finish-load', () => {
       if (backendHealthReady) win.webContents.send('backend:ready')
+    })
+    win.on('closed', () => {
+      activeWebContentsByWindow.delete(win.webContents.id)
+      tabStateByWindow.delete(win.webContents.id)
     })
     return true
   })
@@ -1551,9 +1676,13 @@ function registerIpc() {
 
   // API proxy: renderer → main → backend (bypasses CORS from app:// origin)
   ipcMain.handle('api:request', async (_e, { method, path, body }) => {
+    const MAX_API_BODY = 10 * 1024 * 1024 // 10 MB
     const url = `http://127.0.0.1:${BACKEND_PORT}${path}`
     console.log('[api:proxy]', method, path)
     try {
+      if (body && body.length > MAX_API_BODY) {
+        throw new Error('Request body too large')
+      }
       const opts = {
         method: method || 'GET',
         headers: { 'Content-Type': 'application/json' },
@@ -2050,7 +2179,11 @@ function createWindow() {
     mainWindow.loadURL('app://./dist/index.html')
   }
 
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => {
+    activeWebContentsByWindow.delete(mainWindow.webContents.id)
+    tabStateByWindow.delete(mainWindow.webContents.id)
+    mainWindow = null
+  })
 
   attachRendererShortcuts(mainWindow)
 }

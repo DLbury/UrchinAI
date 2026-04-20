@@ -36,8 +36,9 @@ class HistoryEntry(BaseModel):
 
 @router.get("")
 def list_history(limit: int = 200):
+    clamped = max(1, min(limit, MAX_ENTRIES))
     data = _load()
-    return list(reversed(data[-limit:]))
+    return list(reversed(data[-clamped:]))
 
 
 @router.post("")

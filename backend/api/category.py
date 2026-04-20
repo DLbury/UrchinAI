@@ -100,7 +100,10 @@ def update_category(cat_id: str, body: CategoryUpdate):
     for i, cat in enumerate(custom):
         if cat["id"] == cat_id:
             if body.name is not None:
-                custom[i]["name"] = body.name.strip()
+                name = body.name.strip()
+                if not name:
+                    raise HTTPException(status_code=400, detail="Category name cannot be empty")
+                custom[i]["name"] = name
             if body.icon is not None:
                 custom[i]["icon"] = body.icon
             if body.name_en is not None:

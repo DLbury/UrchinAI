@@ -61,7 +61,10 @@ class BrowserTools:
         return f"已在 [{selector}] 输入: {text}"
 
     async def browser_get_text(self, selector: str = "body") -> str:
-        """获取页面文字内容。"""
+        """获取页面文字内容（敏感页面会被拦截）。"""
+        current_url = await self.browser_get_url()
+        if self._is_sensitive_host(current_url):
+            return "获取文字被拒绝：当前页面属于敏感站点，已禁止读取内容。"
         res = await _call("POST", "/get-text", selector=selector)
         if "error" in res:
             return f"获取文字失败: {res['error']}"
@@ -79,7 +82,7 @@ class BrowserTools:
             return f"滚动失败: {res['error']}"
         return f"已向{direction}滚动 {amount}px"
 
-    # Hosts where arbitrary JS execution is considered high-risk
+    # Hosts where content reading / screenshots are considered high-risk
     _SENSITIVE_HOST_PATTERNS = {
         "alipay", "wechatpay", "tenpay", "paypal", "stripe", "bank",
         "mail", "gmail", "outlook", "yahoo", "163.com", "qq.com",
@@ -87,20 +90,23 @@ class BrowserTools:
         "kraken", "okx", "huobi", "gate.io", "webull", "robinhood",
     }
 
+    def _is_sensitive_host(self, url: str) -> bool:
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).hostname or ""
+            host_lower = host.lower()
+            return any(p in host_lower for p in self._SENSITIVE_HOST_PATTERNS)
+        except Exception:
+            return False
+
     async def browser_evaluate(self, javascript: str) -> str:
         """在浏览器页面执行 JavaScript（敏感页面会被拦截）。"""
         current_url = await self.browser_get_url()
-        try:
-            from urllib.parse import urlparse
-            host = urlparse(current_url).hostname or ""
-            host_lower = host.lower()
-            if any(p in host_lower for p in self._SENSITIVE_HOST_PATTERNS):
-                return (
-                    f"JS 执行被拒绝：当前页面 {host} 属于敏感站点，"
-                    "为避免安全风险，已禁止在此页面执行任意代码。"
-                )
-        except Exception:
-            pass
+        if self._is_sensitive_host(current_url):
+            return (
+                "JS 执行被拒绝：当前页面属于敏感站点，"
+                "为避免安全风险，已禁止在此页面执行任意代码。"
+            )
         res = await _call("POST", "/execute", javascript=javascript)
         if "error" in res:
             return f"JS 执行失败: {res['error']}"
@@ -142,7 +148,10 @@ class BrowserTools:
         return f"已切换到标签 {tab_id}"
 
     async def browser_get_dom(self) -> str:
-        """获取页面所有可交互元素的编号列表（类似 page-agent 的文字 DOM），供 LLM 用 @N 定位元素。"""
+        """获取页面所有可交互元素的编号列表（类似 page-agent 的文字 DOM），供 LLM 用 @N 定位元素（敏感页面会被拦截）。"""
+        current_url = await self.browser_get_url()
+        if self._is_sensitive_host(current_url):
+            return "获取 DOM 被拒绝：当前页面属于敏感站点，已禁止读取内容。"
         res = await _call("GET", "/get-dom")
         if "error" in res:
             return f"获取 DOM 失败: {res['error']}"
@@ -188,7 +197,10 @@ class BrowserTools:
         return f"已按键: {key}"
 
     async def browser_screenshot(self) -> str:
-        """截取当前页面的截图，以 base64 JPEG 格式返回，供视觉分析使用。"""
+        """截取当前页面的截图，以 base64 JPEG 格式返回，供视觉分析使用（敏感页面会被拦截）。"""
+        current_url = await self.browser_get_url()
+        if self._is_sensitive_host(current_url):
+            return "截图被拒绝：当前页面属于敏感站点，已禁止截取屏幕内容。"
         res = await _call("GET", "/screenshot")
         if "error" in res:
             return f"截图失败: {res['error']}"
@@ -197,7 +209,10 @@ class BrowserTools:
         return f"screenshot:{w}x{h}:data:image/jpeg;base64,{b64}"
 
     async def browser_get_page_content(self) -> str:
-        """获取当前页面的主要文字内容（已去除广告/导航等噪音），用于总结或分析。"""
+        """获取当前页面的主要文字内容（已去除广告/导航等噪音），用于总结或分析（敏感页面会被拦截）。"""
+        current_url = await self.browser_get_url()
+        if self._is_sensitive_host(current_url):
+            return "获取页面内容被拒绝：当前页面属于敏感站点，已禁止读取内容。"
         res = await _call("GET", "/page-content")
         if "error" in res:
             return f"获取内容失败: {res['error']}"

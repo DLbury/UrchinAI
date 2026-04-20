@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCmdRestoreSession:(cb) => { const handler = (_e, tabs) => cb(tabs); ipcRenderer.on('cmd:restoreSession',handler); return () => ipcRenderer.removeListener('cmd:restoreSession', handler) },
   onCmdNewSession:    (cb) => { const handler = ()         => cb();     ipcRenderer.on('cmd:newSession',    handler); return () => ipcRenderer.removeListener('cmd:newSession', handler) },
   onCmdAskAI:         (cb) => { const handler = (_e, text) => cb(text); ipcRenderer.on('cmd:askAI',         handler); return () => ipcRenderer.removeListener('cmd:askAI', handler) },
+  onCmdTranslate:     (cb) => { const handler = (_e, text) => cb(text); ipcRenderer.on('cmd:translate',     handler); return () => ipcRenderer.removeListener('cmd:translate', handler) },
+  showTranslateResult:(text, result) => ipcRenderer.invoke('translate:showResult', text, result),
 
   // ── Ad blocking ───────────────────────────────────────────────────────────
   getAdBlockEnabled: ()        => ipcRenderer.invoke('adblock:getEnabled'),
@@ -34,9 +36,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── Cookies ─────────────────────────────────────────────────────────────────
   getCookies:   (domain)    => ipcRenderer.invoke('cookies:get', domain),
+  getSiteCookies: (url)     => ipcRenderer.invoke('cookies:getForUrl', url),
   setCookie:   (opts)      => ipcRenderer.invoke('cookies:set', opts),
   removeCookie:(opts)      => ipcRenderer.invoke('cookies:remove', opts),
   clearAllCookies: ()       => ipcRenderer.invoke('cookies:clearAll'),
+  clearSiteData: (url)      => ipcRenderer.invoke('storage:clearSiteData', url),
 
   // ── Sessions ──────────────────────────────────────────────────────────────
   saveSession:    (name) => ipcRenderer.invoke('session:save', name),

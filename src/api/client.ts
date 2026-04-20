@@ -159,3 +159,11 @@ export const listChatSessions = () =>
   request<{ sessions: Array<{ id: string; name: string; createdAt: number; messages: Array<{ id: string; role: string; content: string; toolCalls?: unknown[]; files?: unknown[]; createdAt: number }> }>; currentSessionId: string }>('/api/chat-sessions')
 export const saveChatSessions = (sessions: Array<{ id: string; name: string; createdAt: number; messages: Array<{ id: string; role: string; content: string; toolCalls?: unknown[]; files?: unknown[]; createdAt: number }> }>, currentSessionId: string) =>
   request('/api/chat-sessions', { method: 'PUT', body: JSON.stringify({ sessions, currentSessionId }) })
+
+// Translation
+export const translate = (text: string) =>
+  request<{ translation: string }>('/api/translate', { method: 'POST', body: JSON.stringify({ text }) })
+export const getTranslationConfig = () =>
+  request<{ model: string; provider: string; targetLang: string }>('/api/config/translation')
+export const updateTranslationConfig = (data: { model: string; provider: string; targetLang: string }) =>
+  request('/api/config/translation', { method: 'PUT', body: JSON.stringify(data) })

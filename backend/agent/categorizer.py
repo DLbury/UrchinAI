@@ -38,7 +38,7 @@ def _create_categorizer_provider() -> tuple[Any, str, str] | None:
     if not _cfg_path.exists():
         return None
     try:
-        raw = _json.loads(_cfg_path.read_text())
+        raw = _json.loads(_cfg_path.read_text(encoding="utf-8"))
     except Exception:
         return None
 

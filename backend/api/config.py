@@ -56,7 +56,7 @@ def _unmask(new_obj: Any, orig_obj: Any) -> Any:
 def _read_config() -> dict:
     if CONFIG_PATH.exists():
         try:
-            with open(CONFIG_PATH) as f:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
             return {}
@@ -108,7 +108,9 @@ async def update_provider(name: str, body: ProviderUpdate):
     existing = cfg["providers"].get(name, {})
     if body.apiKey and body.apiKey != MASKED:
         existing["apiKey"] = body.apiKey
-    if body.apiBase:
+    if body.apiBase != MASKED:
+        if body.apiBase and not body.apiBase.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="apiBase must be a valid HTTP/HTTPS URL")
         existing["apiBase"] = body.apiBase
     if body.models is not None:
         existing["models"] = body.models

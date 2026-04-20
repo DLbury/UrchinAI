@@ -357,7 +357,7 @@ _MEMORY_TOOL_SCHEMAS: list[dict] = [
 
 def _load_config() -> dict:
     if NANOBOT_CONFIG.exists():
-        with open(NANOBOT_CONFIG) as f:
+        with open(NANOBOT_CONFIG, encoding="utf-8") as f:
             return json.load(f)
     return {}
 

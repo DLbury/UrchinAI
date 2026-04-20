@@ -17,6 +17,7 @@ import {
   listSkillMemory, getSkillMemory, saveSkillMemory, deleteSkillMemory,
   listCategories, addCategory, deleteCategory,
   getAgentLimits, updateAgentLimits, getSearchEngine, updateSearchEngine,
+  getTranslationConfig, updateTranslationConfig,
 } from '../../api/client'
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
@@ -138,6 +139,17 @@ function parseArgsSafe(s: string): string[] {
 
 // ── 模型配置标签页 ────────────────────────────────────────────────────────────
 
+const TARGET_LANGUAGES = [
+  { label: '中文', value: '中文' },
+  { label: 'English', value: 'English' },
+  { label: '日本語', value: '日本語' },
+  { label: '한국어', value: '한국어' },
+  { label: 'Français', value: 'Français' },
+  { label: 'Deutsch', value: 'Deutsch' },
+  { label: 'Español', value: 'Español' },
+  { label: 'Русский', value: 'Русский' },
+]
+
 function ModelTab() {
   const [currentModel, setCurrentModel] = useState('')
   const [currentProvider, setCurrentProvider] = useState('')
@@ -146,6 +158,12 @@ function ModelTab() {
   const [loading, setLoading] = useState(true)
   const [modelSave, triggerModelSave] = useSaveState()
   const loadedRef = useRef(false)
+
+  // Translation settings
+  const [transProvider, setTransProvider] = useState('')
+  const [transModel, setTransModel] = useState('')
+  const [targetLang, setTargetLang] = useState('中文')
+  const [transSave, triggerTransSave] = useSaveState()
 
   const load = useCallback(async () => {
     if (loadedRef.current) return
@@ -181,6 +199,18 @@ function ModelTab() {
           }
         }))
       }
+
+      // Load translation config
+      try {
+        const tCfg = await getTranslationConfig()
+        setTransProvider(tCfg.provider || '')
+        setTransModel(tCfg.model || '')
+        setTargetLang(tCfg.targetLang || '中文')
+      } catch {
+        // fallback: use defaults
+        setTransProvider(migratedProvider)
+        setTransModel((defaults?.model as string) ?? '')
+      }
     } finally { setLoading(false) }
   }, [])
 
@@ -190,6 +220,16 @@ function ModelTab() {
   const saveCurrentModel = async () => {
     await updateModel(currentModel, currentProvider || undefined)
     triggerModelSave()
+  }
+
+  // 保存翻译配置
+  const saveTranslationConfig = async () => {
+    await updateTranslationConfig({
+      model: transModel,
+      provider: transProvider,
+      targetLang,
+    })
+    triggerTransSave()
   }
 
   // 保存服务商配置（包括模型列表）
@@ -255,7 +295,7 @@ function ModelTab() {
                 setCurrentProvider(provider)
                 setCurrentModel(model)
               }}
-              className="w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
+              className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
             >
               <option value="">请选择模型…</option>
               {providers.filter(p => p.models?.length > 0).map(p => (
@@ -286,6 +326,65 @@ function ModelTab() {
         )}
       </section>
 
+      {/* ── 翻译设置 ── */}
+      <section>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">翻译设置</h3>
+        <p className="text-xs text-nb-text-dim mb-4">配置划词翻译使用的模型和目标语言。</p>
+        <div className="grid gap-4">
+          {/* 翻译模型 */}
+          <div>
+            <label className="block text-xs text-nb-text-dim mb-1.5">翻译模型</label>
+            <select
+              value={transProvider ? `${transProvider}|${transModel}` : ''}
+              onChange={e => {
+                const [provider, model] = e.target.value.split('|')
+                setTransProvider(provider)
+                setTransModel(model)
+              }}
+              className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
+            >
+              <option value="">使用默认模型</option>
+              {providers.filter(p => p.models?.length > 0).map(p => (
+                <optgroup key={p.name} label={PROVIDER_LABELS[p.name] || p.name}>
+                  {p.models.map(m => (
+                    <option key={`${p.name}|${m.value}`} value={`${p.name}|${m.value}`}>
+                      {m.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            {transModel && (
+              <p className="text-xs text-nb-text-muted font-mono bg-nb-card/50 rounded-lg px-3 py-1.5 mt-2">
+                {PROVIDER_LABELS[transProvider] || transProvider} / {transModel}
+              </p>
+            )}
+          </div>
+
+          {/* 目标语言 */}
+          <div>
+            <label className="block text-xs text-nb-text-dim mb-1.5">目标语言</label>
+            <select
+              value={targetLang}
+              onChange={e => setTargetLang(e.target.value)}
+              className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
+            >
+              {TARGET_LANGUAGES.map(lang => (
+                <option key={lang.value} value={lang.value}>{lang.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <button onClick={saveTranslationConfig}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-sm font-medium transition-colors w-fit">
+            {transSave === 'saving' ? <Loader2 size={15} className="animate-spin" /> :
+             transSave === 'saved' ? <CheckCircle size={15} className="text-green-300" /> :
+             <Save size={15} />}
+            {transSave === 'saved' ? '已保存！' : '保存翻译设置'}
+          </button>
+        </div>
+      </section>
+
       {/* ── API 服务商配置 ── */}
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">API 服务商配置</h3>
@@ -304,7 +403,7 @@ function ModelTab() {
           {/* 添加新服务商 */}
           <div className="flex gap-2 pt-2">
             <select value={newProviderName} onChange={e => setNewProviderName(e.target.value)}
-              className="flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500">
+              className="text-nb-text-soft flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500">
               <option value="">选择要添加的服务商…</option>
               {KNOWN_PROVIDERS.filter(p => !providers.find(r => r.name === p)).map(p => (
                 <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
@@ -312,7 +411,7 @@ function ModelTab() {
             </select>
             <input value={newProviderName} onChange={e => setNewProviderName(e.target.value)}
               placeholder="自定义名称"
-              className="w-28 bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
+              className="text-nb-text-soft w-28 bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
             <button onClick={addProvider} disabled={!newProviderName.trim()}
               className="px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-40 disabled:hover:bg-brand-600 transition-colors text-sm">
               添加
@@ -394,7 +493,7 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
           <input type={row.showKey ? 'text' : 'password'} value={row.apiKey}
             onChange={e => onChange({ apiKey: e.target.value })}
             placeholder="sk-… 或 Bearer token"
-            className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm pr-9 outline-none focus:border-brand-500 transition-colors" />
+            className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm pr-9 outline-none focus:border-brand-500 transition-colors" />
           <button onClick={() => onChange({ showKey: !row.showKey })}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-nb-text-dim hover:text-nb-text-soft">
             {row.showKey ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -409,7 +508,7 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
         </label>
         <input value={row.apiBase} onChange={e => onChange({ apiBase: e.target.value })}
           placeholder="例如 http://192.168.x.x:11434 或 …:1234/v1"
-          className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500 transition-colors" />
+          className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500 transition-colors" />
         <p className="mt-1 text-[10px] text-nb-text-muted leading-relaxed">
           须指向提供 OpenAI 兼容接口的服务；程序会请求「Base + /v1/chat/completions」。Ollama 多为端口 11434；LM Studio 常为 /v1；若出现 404，请核对端口是否真是推理服务而非其它网站。
         </p>
@@ -437,10 +536,10 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
         <div className="flex gap-2 mb-2">
           <input value={row.newModelLabel} onChange={e => onChange({ newModelLabel: e.target.value })}
             placeholder="显示名"
-            className="flex-1 bg-nb-raised border border-nb-border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-brand-500" />
+            className="text-nb-text-soft flex-1 bg-nb-raised border border-nb-border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-brand-500" />
           <input value={row.newModelValue} onChange={e => onChange({ newModelValue: e.target.value })}
             placeholder="模型ID"
-            className="flex-1 bg-nb-raised border border-nb-border rounded-lg px-2 py-1.5 text-xs font-mono outline-none focus:border-brand-500" />
+            className="text-nb-text-soft flex-1 bg-nb-raised border border-nb-border rounded-lg px-2 py-1.5 text-xs font-mono outline-none focus:border-brand-500" />
           <button onClick={addModel} disabled={!row.newModelLabel.trim() || !row.newModelValue.trim()}
             className="px-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-40 transition-colors">
             <Plus size={14} />
@@ -661,7 +760,7 @@ function SkillsTab() {
                 onChange={e => setSearchQuery(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') searchAnthropicSkills() }}
                 placeholder="搜索技能名称..."
-                className="flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500"
+                className="text-nb-text-soft flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500"
               />
               <button
                 onClick={searchAnthropicSkills}
@@ -759,13 +858,13 @@ function SkillsTab() {
             <label className="block text-xs text-nb-text-dim mb-1">技能链接（skill.md）</label>
             <input value={installUrl} onChange={e => setInstallUrl(e.target.value)}
               placeholder="https://…/skill.md"
-              className="w-full bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
+              className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
           </div>
           <div>
             <label className="block text-xs text-nb-text-dim mb-1">目录名 <span className="text-nb-text-muted">（可选）</span></label>
             <input value={installName} onChange={e => setInstallName(e.target.value)}
               placeholder="my-skill"
-              className="w-full bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
+              className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
           </div>
           {error && (
             <div className="flex items-start gap-2 text-xs bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-900 text-red-600 dark:text-red-400 rounded-xl px-3 py-2">
@@ -872,12 +971,12 @@ function MCPTab() {
             <div>
               <label className="block text-xs text-nb-text-dim mb-1">名称</label>
               <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="my-server"
-                className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
+                className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
             </div>
             <div>
               <label className="block text-xs text-nb-text-dim mb-1">类型</label>
               <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as 'stdio' | 'http' }))}
-                className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500">
+                className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500">
                 <option value="stdio">stdio（本地进程）</option>
                 <option value="http">http（远程端点）</option>
               </select>
@@ -887,29 +986,29 @@ function MCPTab() {
             <div>
               <label className="block text-xs text-nb-text-dim mb-1">命令</label>
               <input value={form.command} onChange={e => setForm(f => ({ ...f, command: e.target.value }))} placeholder="npx"
-                className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
+                className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
             </div>
             <div>
               <label className="block text-xs text-nb-text-dim mb-1">参数（JSON 数组或逗号分隔）</label>
               <input value={form.args} onChange={e => setForm(f => ({ ...f, args: e.target.value }))} placeholder='["-y", "@mcp/server"]'
-                className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:border-brand-500" />
+                className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:border-brand-500" />
             </div>
           </>) : (<>
             <div>
               <label className="block text-xs text-nb-text-dim mb-1">URL</label>
               <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://mcp.example.com/sse"
-                className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
+                className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
             </div>
             <div>
               <label className="block text-xs text-nb-text-dim mb-1">请求头（JSON）</label>
               <input value={form.headers} onChange={e => setForm(f => ({ ...f, headers: e.target.value }))} placeholder='{"Authorization":"Bearer …"}'
-                className="w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:border-brand-500" />
+                className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:border-brand-500" />
             </div>
           </>)}
           <div>
             <label className="block text-xs text-nb-text-dim mb-1">超时时间（秒）</label>
             <input type="number" value={form.toolTimeout} onChange={e => setForm(f => ({ ...f, toolTimeout: e.target.value }))}
-              className="w-24 bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
+              className="text-nb-text-soft w-24 bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
           </div>
           {error && <div className="flex items-start gap-2 text-xs bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-900 text-red-600 dark:text-red-400 rounded-xl px-3 py-2"><AlertCircle size={13} className="shrink-0 mt-0.5" />{error}</div>}
           <div className="flex gap-2">
@@ -1723,12 +1822,12 @@ function CookiesTab() {
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-2 cursor-pointer text-sm text-nb-text-dim">
               <input type="checkbox" checked={addSecure} onChange={e => setAddSecure(e.target.checked)}
-                className="w-4 h-4 rounded border-nb-border bg-nb-input accent-brand-500" />
+                className="text-nb-text-soft w-4 h-4 rounded border-nb-border bg-nb-input accent-brand-500" />
               {t('settings.cookieSecure') || 'Secure'}
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm text-nb-text-dim">
               <input type="checkbox" checked={addHttpOnly} onChange={e => setAddHttpOnly(e.target.checked)}
-                className="w-4 h-4 rounded border-nb-border bg-nb-input accent-brand-500" />
+                className="text-nb-text-soft w-4 h-4 rounded border-nb-border bg-nb-input accent-brand-500" />
               HttpOnly
             </label>
           </div>

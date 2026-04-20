@@ -11,10 +11,15 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from utils import atomic_write_text
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
 SKILLS_DIR = Path.home() / ".nanobot" / "workspace" / "skills"
+
+MAX_SKILL_CONTENT_SIZE = 2 * 1024 * 1024  # 2 MB
+MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 def _skill_list() -> list[dict]:
@@ -29,13 +34,13 @@ def _skill_list() -> list[dict]:
             description = ""
             if meta_file.exists():
                 try:
-                    meta = json.loads(meta_file.read_text())
+                    meta = json.loads(meta_file.read_text(encoding="utf-8"))
                     description = meta.get("description", "")
                     name = meta.get("name", name)
                 except Exception:
                     pass
             elif md_file.exists():
-                lines = md_file.read_text().splitlines()
+                lines = md_file.read_text(encoding="utf-8").splitlines()
                 for line in lines:
                     if line.startswith("# "):
                         name = line[2:].strip()
@@ -75,9 +80,13 @@ async def install_skill(body: InstallSkillRequest):
 
     try:
         # Use system proxy if available (HTTP_PROXY/HTTPS_PROXY env vars)
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             resp = await client.get(url)
+            if resp.is_redirect:
+                raise HTTPException(400, "Redirects are not allowed for skill installation. Please provide the direct URL.")
             resp.raise_for_status()
+            if len(resp.content) > MAX_DOWNLOAD_SIZE:
+                raise HTTPException(413, f"Download too large: limit is {MAX_DOWNLOAD_SIZE} bytes")
             content = resp.content if is_zip else resp.text
     except httpx.HTTPStatusError as exc:
         logger.error(f"Failed to fetch skill: HTTP {exc.response.status_code}")
@@ -128,7 +137,9 @@ async def install_skill(body: InstallSkillRequest):
                 if skill_md_path:
                     # Extract the skill file
                     skill_content = zf.read(skill_md_path).decode('utf-8')
-                    (skill_dir / "skill.md").write_text(skill_content)
+                    if len(skill_content) > MAX_SKILL_CONTENT_SIZE:
+                        raise HTTPException(413, f"Skill content too large: limit is {MAX_SKILL_CONTENT_SIZE} bytes")
+                    atomic_write_text(skill_dir / "skill.md", skill_content)
                 else:
                     # If no skill.md found, extract all files safely (prevent Zip Slip)
                     for member in zf.infolist():
@@ -148,7 +159,9 @@ async def install_skill(body: InstallSkillRequest):
             logger.info(f"Skill installed successfully from zip: {skill_name}")
         else:
             # Handle plain markdown file
-            (skill_dir / "skill.md").write_text(content)
+            if len(content) > MAX_SKILL_CONTENT_SIZE:
+                raise HTTPException(413, f"Skill content too large: limit is {MAX_SKILL_CONTENT_SIZE} bytes")
+            atomic_write_text(skill_dir / "skill.md", content)
             logger.info(f"Skill installed successfully: {skill_name}")
     except Exception as exc:
         logger.error(f"Failed to write skill file: {exc}")
@@ -186,6 +199,8 @@ async def install_local_skill(body: InstallLocalSkillRequest):
         raise HTTPException(400, "Skill name is required")
     if not content:
         raise HTTPException(400, "Skill content is required")
+    if len(content) > MAX_SKILL_CONTENT_SIZE:
+        raise HTTPException(413, f"Skill content too large: limit is {MAX_SKILL_CONTENT_SIZE} bytes")
 
     # Sanitize skill name
     skill_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in skill_name)[:64]
@@ -197,7 +212,7 @@ async def install_local_skill(body: InstallLocalSkillRequest):
         skill_dir.mkdir(parents=True, exist_ok=True)
 
         # Write the skill.md file
-        (skill_dir / "skill.md").write_text(content)
+        atomic_write_text(skill_dir / "skill.md", content)
         logger.info(f"Local skill installed successfully: {skill_name}")
     except Exception as exc:
         logger.error(f"Failed to write local skill file: {exc}")

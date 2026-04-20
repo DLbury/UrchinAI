@@ -631,6 +631,11 @@ export default function ChatPanel({
   const messagesRef = useRef(propMessagesBySession || {})
   useEffect(() => { messagesRef.current = propMessagesBySession || {} }, [propMessagesBySession])
 
+  // 切换会话时清空已选取的 DOM 元素
+  useEffect(() => {
+    setPickedElements([])
+  }, [sessionId])
+
   // 加载配置（可重复调用，用于后端就绪后重新加载）
   const loadConfig = useCallback(async () => {
     try {

@@ -28,7 +28,7 @@ _DANGEROUS_COMMANDS = {
 def _read_config() -> dict:
     if CONFIG_PATH.exists():
         try:
-            with open(CONFIG_PATH) as f:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
             return {}
@@ -105,6 +105,8 @@ async def add_mcp_server(body: MCPServerRequest):
     if body.type == "http":
         if not body.url:
             raise HTTPException(400, "url is required for http type")
+        if not body.url.startswith(("http://", "https://")):
+            raise HTTPException(400, "url must start with http:// or https://")
         spec: dict[str, Any] = {"url": body.url}
         if body.headers:
             spec["headers"] = body.headers
@@ -139,6 +141,8 @@ async def update_mcp_server(name: str, body: MCPServerRequest):
     if body.type == "http":
         if not body.url:
             raise HTTPException(400, "url is required for http type")
+        if not body.url.startswith(("http://", "https://")):
+            raise HTTPException(400, "url must start with http:// or https://")
         spec: dict[str, Any] = {"url": body.url}
         if body.headers:
             spec["headers"] = body.headers

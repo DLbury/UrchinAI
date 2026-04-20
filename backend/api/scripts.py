@@ -87,4 +87,4 @@ def update_script(script_id: str, body: ScriptUpdate):
                 s["icon"] = body.icon
             _save(data)
             return s
-    return {"error": "not found"}
+    raise HTTPException(status_code=404, detail="Script not found")

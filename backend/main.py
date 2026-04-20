@@ -37,6 +37,8 @@ from api.memory import router as memory_router
 from api.scripts import router as scripts_router
 from api.category import router as category_router
 from api.chat_sessions import router as chat_sessions_router
+from api.translate import router as translate_router
+from api.translate_config import router as translate_config_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -65,6 +67,8 @@ app.include_router(memory_router)
 app.include_router(scripts_router)
 app.include_router(category_router)
 app.include_router(chat_sessions_router)
+app.include_router(translate_router)
+app.include_router(translate_config_router)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

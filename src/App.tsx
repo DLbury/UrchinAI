@@ -4,7 +4,8 @@ import {
   Settings, RefreshCw, ChevronLeft, ChevronRight, Globe,
   Plus, X, Loader2, PanelRightClose, PanelRightOpen,
   Bookmark, BookmarkCheck, Clock, Trash2, Search, History,
-  Shield, ShieldOff, Minus, Maximize2,
+  Shield, ShieldOff, Minus, Maximize2, Lock, Unlock, AlertTriangle,
+  Database,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from './hooks/useTheme'
@@ -16,7 +17,7 @@ import type { ChatMessage, ChatSession, WSMessage } from './types'
 import {
   listBookmarks, addBookmark, removeBookmark, updateBookmarkCategory,
   listHistory, addHistory, clearHistory, listCategories,
-  listChatSessions, saveChatSessions, getSearchEngine,
+  listChatSessions, saveChatSessions, getSearchEngine, translate,
 } from './api/client'
 import { useWebSocket } from './hooks/useWebSocket'
 
@@ -39,15 +40,19 @@ type ElectronAPI = {
   newSession:          ()             => Promise<{ ok: boolean }>
   onCmdNewSession:     (cb: () => void) => () => void
   onCmdAskAI:          (cb: (text: string) => void) => () => void
+  onCmdTranslate:      (cb: (text: string) => void) => () => void
+  showTranslateResult: (text: string, result: string) => Promise<void>
   openExternal:        (url: string)  => Promise<void>
   onBackendReady:      (cb: () => void) => () => void
   getFXEnabled:        () => Promise<boolean>
   setFXEnabled:        (enabled: boolean) => Promise<void>
   // Cookies
   getCookies:          (domain?: string) => Promise<CookieItem[]>
+  getSiteCookies:      (url: string) => Promise<CookieItem[]>
   setCookie:          (opts: SetCookieOpts) => Promise<{ ok: boolean; error?: string }>
   removeCookie:       (opts: { url: string; name: string }) => Promise<{ ok: boolean; error?: string }>
   clearAllCookies:     () => Promise<{ ok: boolean; error?: string }>
+  clearSiteData:       (url: string) => Promise<{ ok: boolean; error?: string }>
   showContextMenu:     (params: Record<string, unknown>) => Promise<void>
   detachTab:           (url: string, screenX: number, screenY: number, theme?: string) => Promise<boolean>
   // Find in page (Ctrl+F)
@@ -222,9 +227,20 @@ function HistoryPanel({ items, onNavigate, onClear, onClose, t }: {
   const [search, setSearch] = useState('')
   const filtered = search ? items.filter(h => h.url.includes(search) || h.title.toLowerCase().includes(search.toLowerCase())) : items
   const fmtTime = (ts:number) => new Date(ts*1000).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [onClose])
 
   return (
-    <div className="absolute right-0 top-full mt-2 w-96 max-h-[70vh] bg-nb-base border border-nb-border rounded-2xl shadow-2xl shadow-black/20 z-40 flex flex-col overflow-hidden backdrop-blur-xl">
+    <div ref={panelRef} className="absolute right-0 top-full mt-2 w-96 max-h-[70vh] bg-nb-base border border-nb-border rounded-2xl shadow-2xl shadow-black/20 z-40 flex flex-col overflow-hidden backdrop-blur-xl">
       <div className="flex items-center justify-between px-4 py-3.5 border-b border-nb-border/60 shrink-0 bg-gradient-to-r from-nb-card/50 to-transparent">
         <span className="text-sm font-semibold text-nb-text flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
@@ -285,10 +301,21 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
 }) {
   const [categories, setCategories] = useState<CategoryInfo[]>([])
   const [filter, setFilter] = useState<string>('all')
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     listCategories().then(setCategories).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [onClose])
 
   // Fallback categorization for items without category
   const fallbackCategorize = (url: string): string => {
@@ -329,7 +356,7 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
   const displayItems = filter === 'all' ? null : (groupedItems[filter] || [])
 
   return (
-    <div className="absolute right-0 top-full mt-2 w-96 max-h-[70vh] bg-nb-base border border-nb-border rounded-2xl shadow-2xl shadow-black/20 z-40 flex flex-col overflow-hidden backdrop-blur-xl">
+    <div ref={panelRef} className="absolute right-0 top-full mt-2 w-96 max-h-[70vh] bg-nb-base border border-nb-border rounded-2xl shadow-2xl shadow-black/20 z-40 flex flex-col overflow-hidden backdrop-blur-xl">
       <div className="flex items-center justify-between px-4 py-3.5 border-b border-nb-border/60 shrink-0 bg-gradient-to-r from-nb-card/50 to-transparent">
         <span className="text-sm font-semibold text-nb-text flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center">
@@ -512,6 +539,162 @@ function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChang
   )
 }
 
+// ── Site Info Popup ───────────────────────────────────────────────────────────
+function SiteInfoPopup({
+  url,
+  isOpen,
+  onClose,
+  cookies,
+  onRefresh,
+  onRemoveCookie,
+  onClearSiteData,
+}: {
+  url: string
+  isOpen: boolean
+  onClose: () => void
+  cookies: CookieItem[]
+  onRefresh: () => void
+  onRemoveCookie: (name: string) => void
+  onClearSiteData: () => void
+}) {
+  const popupRef = useRef<HTMLDivElement>(null)
+  const [confirmClear, setConfirmClear] = useState(false)
+
+  useEffect(() => {
+    if (!isOpen) return
+    onRefresh()
+    const handleClick = (e: MouseEvent) => {
+      if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [isOpen, onRefresh, onClose])
+
+  if (!isOpen) return null
+
+  let hostname = ''
+  let isSecure = false
+  let protocol = ''
+  try {
+    const parsed = new URL(url)
+    hostname = parsed.hostname
+    protocol = parsed.protocol
+    isSecure = protocol === 'https:'
+  } catch {
+    hostname = url || '未知站点'
+  }
+
+  const hasValidPage = url && url !== 'about:blank'
+
+  return (
+    <div
+      ref={popupRef}
+      className="absolute left-0 top-full mt-2 w-80 max-h-[70vh] bg-nb-base border border-nb-border rounded-2xl shadow-2xl shadow-black/20 z-[100] flex flex-col overflow-hidden backdrop-blur-xl"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3.5 border-b border-nb-border/60 shrink-0 bg-gradient-to-r from-nb-card/50 to-transparent">
+        <span className="text-sm font-semibold text-nb-text flex items-center gap-2.5">
+          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isSecure ? 'bg-emerald-500/10' : hasValidPage ? 'bg-amber-500/10' : 'bg-nb-raised'}`}>
+            {isSecure ? <Lock size={14} className="text-emerald-500" /> : hasValidPage ? <Unlock size={14} className="text-amber-500" /> : <Globe size={14} className="text-nb-text-dim" />}
+          </div>
+          <span className="truncate max-w-[160px]">{hostname}</span>
+        </span>
+        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-dim hover:text-nb-text-soft transition-all duration-150"><X size={13} /></button>
+      </div>
+
+      {/* Security info */}
+      <div className="px-4 py-3 border-b border-nb-border/60">
+        <div className="flex items-center gap-2 text-sm">
+          {isSecure ? (
+            <>
+              <Shield size={14} className="text-emerald-500" />
+              <span className="text-emerald-500 font-medium">连接安全</span>
+            </>
+          ) : hasValidPage ? (
+            <>
+              <AlertTriangle size={14} className="text-amber-500" />
+              <span className="text-amber-500 font-medium">连接不安全</span>
+            </>
+          ) : (
+            <>
+              <Globe size={14} className="text-nb-text-dim" />
+              <span className="text-nb-text-dim">未加载页面</span>
+            </>
+          )}
+        </div>
+        {hasValidPage && (
+          <p className="text-xs text-nb-text-muted mt-1 truncate">{url}</p>
+        )}
+      </div>
+
+      {/* Cookies */}
+      <div className="px-4 py-3 border-b border-nb-border/60 flex-1 overflow-y-auto scrollbar-thin min-h-[120px]">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-semibold text-nb-text-soft flex items-center gap-1.5">
+            <Database size={12} />
+            Cookie ({cookies.length})
+          </span>
+          <button onClick={onRefresh} className="text-[10px] text-nb-text-dim hover:text-brand-500 transition-colors">刷新</button>
+        </div>
+        {cookies.length === 0 ? (
+          <div className="py-6 text-center text-nb-text-muted text-xs">
+            暂无 Cookie
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {cookies.map((c, i) => (
+              <div key={i} className="group flex items-center justify-between px-2.5 py-2 rounded-lg bg-nb-card/50 hover:bg-nb-card border border-nb-border/30 hover:border-nb-border/60 transition-all">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-nb-text-soft truncate font-medium">{c.name}</p>
+                  <p className="text-[10px] text-nb-text-muted truncate">{c.domain}{c.path}</p>
+                </div>
+                <button
+                  onClick={() => onRemoveCookie(c.name)}
+                  className="shrink-0 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/10 text-nb-text-dim hover:text-red-500 transition-all duration-150"
+                  title="删除 Cookie"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="px-4 py-3 bg-nb-card/30 shrink-0">
+        {!confirmClear ? (
+          <button
+            onClick={() => setConfirmClear(true)}
+            disabled={!hasValidPage}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-red-500 hover:bg-red-500/10 disabled:text-nb-text-muted disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all duration-150"
+          >
+            <Trash2 size={12} />
+            清除站点数据
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setConfirmClear(false)}
+              className="flex-1 px-3 py-2 rounded-lg text-xs font-medium text-nb-text-soft hover:bg-nb-raised transition-all duration-150"
+            >
+              取消
+            </button>
+            <button
+              onClick={() => { onClearSiteData(); setConfirmClear(false) }}
+              className="flex-1 px-3 py-2 rounded-lg text-xs font-medium text-white bg-red-500 hover:bg-red-600 transition-all duration-150"
+            >
+              确认清除
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
   const { t, i18n } = useTranslation()
@@ -561,6 +744,9 @@ export default function App() {
   const [isResizing, setIsResizing]     = useState(false)
   const [historyOpen, setHistoryOpen]   = useState(false)
   const [bookmarksOpen, setBookmarksOpen] = useState(false)
+  const [siteInfoOpen, setSiteInfoOpen] = useState(false)
+  const [siteCookies, setSiteCookies]   = useState<CookieItem[]>([])
+  const siteInfoRef = useRef<HTMLDivElement>(null)
   const [adBlockOn, setAdBlockOn]       = useState(true)
   const [agentOperating, setAgentOperating] = useState(false)
 
@@ -594,6 +780,8 @@ export default function App() {
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingPersistRef = useRef<{ sessions: ChatSession[]; msgs: Record<string, ChatMessage[]>; currentId: string } | null>(null)
   const flushRafRef = useRef<number | null>(null)
+  const chatSessionsRef = useRef<ChatSession[]>([])
+  useEffect(() => { chatSessionsRef.current = chatSessions }, [chatSessions])
 
   // Load chat sessions from backend
   const loadChatSessions = useCallback(() => {
@@ -605,17 +793,9 @@ export default function App() {
       }
       if (loadedSessions.length > 0) {
         const currentId = data.currentSessionId || loadedSessions[0].id
-        const currentMsgs = msgs[currentId] || []
-        if (currentMsgs.length > 0) {
-          const newSession: ChatSession = { id: uuidv4(), name: `会话 ${loadedSessions.length + 1}`, createdAt: Date.now(), messages: [] }
-          setChatSessions([newSession, ...loadedSessions] as ChatSession[])
-          setChatMessagesBySession({ ...msgs, [newSession.id]: [] })
-          setCurrentChatSessionId(newSession.id)
-        } else {
-          setChatSessions(loadedSessions as ChatSession[])
-          setChatMessagesBySession(msgs)
-          setCurrentChatSessionId(currentId)
-        }
+        setChatSessions(loadedSessions as ChatSession[])
+        setChatMessagesBySession(msgs)
+        setCurrentChatSessionId(currentId)
       } else {
         const defaultSession: ChatSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
         setChatSessions([defaultSession])
@@ -809,6 +989,9 @@ export default function App() {
       if (tabId === activeIdRef.current) notifyActiveWebview(el)
     })
 
+    // Close panels when user clicks inside the webview (focus shifts to webview)
+    add('focus', () => closeAllPanels())
+
     webviewListenersRef.current.set(tabId, listeners)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notifyActiveWebview])
@@ -974,6 +1157,10 @@ export default function App() {
         doFlush()
         setAgentOperating(false)
         setIsStreaming(false)
+        setChatMessagesBySession(prev => {
+          persistSessions(chatSessionsRef.current, prev, currentChatSessionId, true)
+          return prev
+        })
         streamingMsgIdRef.current = null
         pendingToolsRef.current.clear()
       } else if (msg.type === 'error') {
@@ -982,14 +1169,22 @@ export default function App() {
         setIsStreaming(false)
         streamingMsgIdRef.current = null
         pendingToolsRef.current.clear()
-        setChatMessagesBySession(prev => ({
-          ...prev,
-          [currentChatSessionId]: [...(prev[currentChatSessionId] || []), { id: `err-${Date.now()}`, role: 'assistant', content: `错误：${msg.content || '未知错误'}`, createdAt: Date.now() }]
-        }))
+        setChatMessagesBySession(prev => {
+          const nextMsgs = {
+            ...prev,
+            [currentChatSessionId]: [...(prev[currentChatSessionId] || []), { id: `err-${Date.now()}`, role: 'assistant' as const, content: `错误：${msg.content || '未知错误'}`, createdAt: Date.now() }]
+          }
+          persistSessions(chatSessionsRef.current, nextMsgs, currentChatSessionId, true)
+          return nextMsgs
+        })
       } else if (msg.type === 'stopped') {
         doFlush()
         setAgentOperating(false)
         setIsStreaming(false)
+        setChatMessagesBySession(prev => {
+          persistSessions(chatSessionsRef.current, prev, currentChatSessionId, true)
+          return prev
+        })
         streamingMsgIdRef.current = null
         pendingToolsRef.current.clear()
       } else if (msg.type === 'history_cleared') {
@@ -1001,7 +1196,7 @@ export default function App() {
         reasoningBufferRef.current = ''
         setChatMessagesBySession(prev => {
           const nextMsgs = { ...prev, [currentChatSessionId]: [] }
-          persistSessions(chatSessions, nextMsgs, currentChatSessionId, true)
+          persistSessions(chatSessionsRef.current, nextMsgs, currentChatSessionId, true)
           return nextMsgs
         })
       }
@@ -1088,7 +1283,19 @@ export default function App() {
         chatInputRef.current?.(text)
       }, 50)
     })
-    return () => { off1(); off2(); off3(); off4(); off5(); off6() }
+    const off7 = eAPI.onCmdTranslate(async (text) => {
+      if (!text) return
+      try {
+        console.log('[translate] start', text.slice(0, 50))
+        const { translation } = await translate(text)
+        console.log('[translate] result', translation.slice(0, 50))
+        await eAPI?.showTranslateResult(text, translation)
+        console.log('[translate] showResult OK')
+      } catch (e) {
+        console.error('[translate] error:', e)
+      }
+    })
+    return () => { off1(); off2(); off3(); off4(); off5(); off6(); off7() }
   }, [createTab, closeTab, switchTab])
 
   // ── Find in page (Ctrl+F) ────────────────────────────────────────────────
@@ -1177,13 +1384,54 @@ export default function App() {
   }, [loadInitialData])
 
   // ── Panels ────────────────────────────────────────────────────────────────
-  const closeAllPanels = () => { setHistoryOpen(false); setBookmarksOpen(false) }
+  const closeAllPanels = () => { setHistoryOpen(false); setBookmarksOpen(false); setSiteInfoOpen(false); setSessionDropdownOpen(false) }
 
   const openHistory  = () => { listHistory().then(setHistory).catch(()=>{}); closeAllPanels(); setHistoryOpen(true) }
   const closeHistory = () => setHistoryOpen(false)
 
   const openBookmarks  = () => { listBookmarks().then(setBookmarks).catch(()=>{}); closeAllPanels(); setBookmarksOpen(true) }
   const closeBookmarks = () => setBookmarksOpen(false)
+
+  // ── Site info popup helpers ───────────────────────────────────────────────
+  const refreshSiteCookies = useCallback(async () => {
+    if (!currentUrl || currentUrl === 'about:blank') {
+      setSiteCookies([])
+      return
+    }
+    try {
+      const cookies = await eAPI?.getSiteCookies(currentUrl)
+      setSiteCookies(cookies || [])
+    } catch {
+      setSiteCookies([])
+    }
+  }, [currentUrl])
+
+  const handleRemoveSiteCookie = useCallback(async (name: string) => {
+    if (!currentUrl || currentUrl === 'about:blank') return
+    try {
+      await eAPI?.removeCookie({ url: currentUrl, name })
+      refreshSiteCookies()
+    } catch {}
+  }, [currentUrl, refreshSiteCookies])
+
+  const handleClearSiteData = useCallback(async () => {
+    if (!currentUrl || currentUrl === 'about:blank') return
+    try {
+      await eAPI?.clearSiteData(currentUrl)
+      setSiteCookies([])
+    } catch {}
+  }, [currentUrl])
+
+  const toggleSiteInfo = () => {
+    const next = !siteInfoOpen
+    if (next) {
+      closeAllPanels()
+      setSiteInfoOpen(true)
+      refreshSiteCookies()
+    } else {
+      setSiteInfoOpen(false)
+    }
+  }
 
   // ── Bookmark toggle ───────────────────────────────────────────────────────
   const toggleBookmark = async () => {
@@ -1313,7 +1561,36 @@ export default function App() {
 
         {/* URL bar */}
         <div className="flex items-center gap-2 bg-nb-deepest/40 hover:bg-nb-deepest/60 focus-within:bg-nb-deepest/60 focus-within:ring-2 focus-within:ring-brand-500/40 rounded-2xl px-4 py-2 min-w-0 transition-all duration-150 flex-1 border border-nb-border/70 focus-within:border-brand-500/50">
-          <Globe size={14} className="text-nb-text-dim shrink-0" />
+          <div className="relative shrink-0" ref={siteInfoRef}>
+            <button
+              onClick={toggleSiteInfo}
+              title="站点信息"
+              className={`p-1 rounded-lg transition-all duration-150 ${
+                currentUrl.startsWith('https:')
+                  ? 'text-emerald-500 hover:bg-emerald-500/10'
+                  : currentUrl && currentUrl !== 'about:blank'
+                    ? 'text-amber-500 hover:bg-amber-500/10'
+                    : 'text-nb-text-dim hover:text-nb-text hover:bg-nb-raised/80'
+              }`}
+            >
+              {currentUrl.startsWith('https:') ? (
+                <Lock size={14} />
+              ) : currentUrl && currentUrl !== 'about:blank' ? (
+                <Unlock size={14} />
+              ) : (
+                <Globe size={14} />
+              )}
+            </button>
+            <SiteInfoPopup
+              url={currentUrl}
+              isOpen={siteInfoOpen}
+              onClose={() => setSiteInfoOpen(false)}
+              cookies={siteCookies}
+              onRefresh={refreshSiteCookies}
+              onRemoveCookie={handleRemoveSiteCookie}
+              onClearSiteData={handleClearSiteData}
+            />
+          </div>
           <input ref={urlInputRef} value={urlInput} onChange={e=>setUrlInput(e.target.value)}
             onKeyDown={handleUrlKeyDown} onFocus={e=>e.target.select()}
             placeholder={t('common.searchOrUrl')}

@@ -7,6 +7,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agent.memory import get_prompt_memory, get_session_archive, get_skill_memory
+from utils import atomic_write_text
+
+MAX_SKILL_CONTENT_SIZE = 2 * 1024 * 1024  # 2 MB
 
 router = APIRouter(prefix="/api/memory")
 
@@ -68,7 +71,8 @@ def list_archive_sessions():
 
 @router.post("/archive/search")
 def search_archive(req: SearchHistoryRequest):
-    results = _session_archive.search(req.query, limit=req.limit)
+    clamped = max(1, min(req.limit, 100))
+    results = _session_archive.search(req.query, limit=clamped)
     return {"results": results}
 
 
@@ -106,10 +110,13 @@ def save_skill(item: SkillItem):
     from pathlib import Path
 
     name = _sanitize_name(item.name)
+    content = item.content or ""
+    if len(content) > MAX_SKILL_CONTENT_SIZE:
+        raise HTTPException(status_code=413, detail="Skill content too large")
     skills_dir = _skill_memory._skills_dir
     skills_dir.mkdir(parents=True, exist_ok=True)
     path = skills_dir / f"{name}.md"
-    path.write_text(item.content, encoding="utf-8")
+    atomic_write_text(path, content, encoding="utf-8")
     return {"ok": True, "name": name}
 
 

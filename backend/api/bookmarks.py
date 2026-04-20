@@ -77,18 +77,22 @@ async def add_bookmark(bm: BookmarkCreate):
     - If category is specified, use it directly
     - Otherwise, save with empty category first, then auto-categorize in background
     """
+    url = bm.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Only HTTP/HTTPS URLs are allowed for bookmarks")
+
     data = _load()
 
     # Check if already exists - if so, just return (no duplicate)
     for existing in data:
-        if existing.get("url") == bm.url:
+        if existing.get("url") == url:
             return {"ok": True, "category": existing.get("category", ""), "exists": True}
 
     # Determine initial category
     category = bm.category if bm.category else ""
 
     bookmark = {
-        "url": bm.url,
+        "url": url,
         "title": bm.title,
         "favicon": bm.favicon,
         "category": category,
@@ -99,7 +103,7 @@ async def add_bookmark(bm: BookmarkCreate):
 
     # If no category specified, trigger background categorization
     if not category:
-        asyncio.create_task(_async_categorize_and_update(bm.url, bm.title))
+        asyncio.create_task(_async_categorize_and_update(url, bm.title))
 
     return {"ok": True, "category": category, "exists": False}
 
