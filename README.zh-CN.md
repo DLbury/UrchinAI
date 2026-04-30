@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="logo.png" alt="UrchinAI" width="120" />
-
 # UrchinAI
 
 **AI 驱动的智能桌面浏览器 · 用自然语言控制一切**
@@ -276,24 +274,6 @@ AI 自动：多源搜索 → 信息整合 → 结构化输出
 </details>
 
 ---
-
-## 功能截图
-
-<div align="center">
-
-### 主界面 — AI 对话与快速访问
-<img src="docs/screenshots/screenshot-main.png" alt="主界面" width="900"/>
-
-### AI 对话实时交互
-<img src="docs/screenshots/screenshot-chat.png" alt="AI 对话" width="900"/>
-
-### 智能书签管理
-<img src="docs/screenshots/screenshot-bookmarks.png" alt="书签管理" width="900"/>
-
-### 设置面板 — 模型配置
-<img src="docs/screenshots/screenshot-settings.png" alt="设置面板" width="900"/>
-
-</div>
 
 ---
 

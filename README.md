@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="logo.png" alt="UrchinAI" width="120" />
-
 # UrchinAI
 
 **AI-Powered Desktop Browser · Control Everything with Natural Language**
@@ -223,24 +221,6 @@ AI: Search academic DB → Filter by date → Collect results
 </details>
 
 ---
-
-## Screenshots
-
-<div align="center">
-
-### Main Interface — AI Chat & Quick Access
-<img src="docs/screenshots/screenshot-main.png" alt="Main Interface" width="900"/>
-
-### AI Conversation in Action
-<img src="docs/screenshots/screenshot-chat.png" alt="AI Conversation" width="900"/>
-
-### Smart Bookmark Management
-<img src="docs/screenshots/screenshot-bookmarks.png" alt="Bookmarks" width="900"/>
-
-### Settings Panel — Model Configuration
-<img src="docs/screenshots/screenshot-settings.png" alt="Settings" width="900"/>
-
-</div>
 
 ---
 
