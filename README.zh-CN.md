@@ -281,11 +281,17 @@ AI 自动：多源搜索 → 信息整合 → 结构化输出
 
 <div align="center">
 
-### 主界面 - AI 对话控制浏览器
-<img src="docs/screenshots/screenshot-main.png" alt="主界面" width="700"/>
+### 主界面 — AI 对话与快速访问
+<img src="docs/screenshots/screenshot-main.png" alt="主界面" width="900"/>
 
-### 设置面板 - 配置 AI 模型
-<img src="docs/screenshots/screenshot-settings.png" alt="设置面板" width="450"/>
+### AI 对话实时交互
+<img src="docs/screenshots/screenshot-chat.png" alt="AI 对话" width="900"/>
+
+### 智能书签管理
+<img src="docs/screenshots/screenshot-bookmarks.png" alt="书签管理" width="900"/>
+
+### 设置面板 — 模型配置
+<img src="docs/screenshots/screenshot-settings.png" alt="设置面板" width="900"/>
 
 </div>
 
