@@ -1,30 +1,52 @@
 <div align="center">
 
+<img src="logo.png" alt="UrchinAI — Open-source AI desktop browser logo" width="120" />
+
 # UrchinAI
 
-**AI-Powered Desktop Browser · Control Everything with Natural Language**
+**Open-Source AI Desktop Browser · Control the Web with Natural Language**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Release](https://img.shields.io/github/v/release/urchinai/browser?include_prereleases)](https://github.com/urchinai/browser/releases)
-[![Downloads](https://img.shields.io/github/downloads/urchinai/browser/total)](https://github.com/urchinai/browser/releases)
+[![Release](https://img.shields.io/github/v/release/DLbury/UrchinAI?include_prereleases)](https://github.com/DLbury/UrchinAI/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)](https://github.com/DLbury/UrchinAI/releases)
+[![Electron](https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) · [中文](README.zh-CN.md)
+
+<img src="docs/screenshots/hero-banner.png" alt="UrchinAI AI browser hero — natural language web automation on desktop" width="900" />
 
 **"Open GitHub, search for React projects, and organize the top 10 popular repositories"** — AI handles it automatically
+
+[⬇ Download Latest Release](https://github.com/DLbury/UrchinAI/releases) · [📖 Quick Start](#quick-start) · [🛠 Build from Source](#for-developers)
 
 </div>
 
 ---
 
+> **UrchinAI** is a free, open-source **AI browser** and **browser automation agent** for Windows and Linux. Describe tasks in plain English — search, scrape, fill forms, compare prices, summarize pages — and the AI agent drives the browser for you. A privacy-first, self-hosted alternative to closed AI browsers like Atlas, with **15+ LLM providers** (OpenAI, Claude, DeepSeek, Gemini, Kimi, GLM, and more).
+
+## Table of Contents
+
+- [What is UrchinAI?](#what-is-urchinai)
+- [Screenshots](#screenshots)
+- [Key Features](#key-features)
+- [How It Works](#how-it-works)
+- [Use Cases](#use-cases-by-role)
+- [Quick Start](#quick-start)
+- [Usage Examples](#usage-examples)
+- [Why UrchinAI?](#why-urchinai)
+- [For Developers](#for-developers)
+- [Roadmap](#roadmap)
+- [FAQ](#faq)
+- [Contributing](#contributing)
+
+---
+
 ## What is UrchinAI?
 
-**UrchinAI** is an AI-powered desktop browser that lets you control web browsing with natural language. No more clicking through menus or memorizing keyboard shortcuts—just tell the AI what you want to do.
+**UrchinAI** is an AI-powered desktop browser built with Electron, React, and Python. Instead of clicking through menus or writing automation scripts, you tell the AI what you want — it navigates pages, extracts data, fills forms, and returns structured results.
 
-Whether you're a developer researching APIs, a marketer analyzing competitors, a student gathering research, or a professional automating repetitive tasks, UrchinAI adapts to your workflow and makes web interaction effortless.
-
-## What Can UrchinAI Do?
-
-### 🎯 Core Capabilities
+Whether you are a developer researching APIs, a marketer running competitor analysis, a student gathering sources, or anyone tired of repetitive web tasks, UrchinAI turns natural language into **browser automation**.
 
 | Scenario | Just Say | AI Completes |
 |----------|----------|--------------|
@@ -37,72 +59,89 @@ Whether you're a developer researching APIs, a marketer analyzing competitors, a
 | **Shopping** | "Compare prices for this laptop across sites" | Multi-site search → Price comparison |
 | **Content Creation** | "Gather information for a blog post about climate change" | Research → Summarize → Structure |
 
-### ✨ Key Features
+---
+
+## Screenshots
+
+### Main Interface — AI Chat & Smart New Tab
+
+<img src="docs/screenshots/screenshot-main.png" alt="UrchinAI main interface with AI agent chat sidebar, conversation history, and smart new tab dashboard" width="900" />
+
+### AI Agent Conversation — Real-Time Browser Control
+
+<img src="docs/screenshots/screenshot-chat.png" alt="UrchinAI AI agent conversation panel showing natural language browser automation with streaming responses" width="900" />
+
+### Smart Bookmarks — AI Auto-Categorization
+
+<img src="docs/screenshots/screenshot-bookmarks.png" alt="UrchinAI smart bookmark manager with AI-powered automatic categorization" width="900" />
+
+### Settings — Multi-LLM Provider Configuration
+
+<img src="docs/screenshots/screenshot-settings.png" alt="UrchinAI settings panel for configuring OpenAI Claude DeepSeek and other LLM providers" width="900" />
+
+---
+
+## Key Features
 
 | Feature | Description |
 |---------|-------------|
-| **🗣️ Natural Language Control** | Control the browser with everyday language—no scripting needed |
-| **🤖 Multi-AI Support** | 15+ LLM providers: OpenAI, Claude, DeepSeek, Gemini, and more |
+| **🗣️ Natural Language Control** | Control the browser with everyday language — no scripting needed |
+| **🤖 Multi-AI Support** | 15+ LLM providers: OpenAI, Claude, DeepSeek, Gemini, Kimi, GLM, Groq, and more |
 | **🧠 AI Memory System** | Remembers your preferences and gets smarter over time |
-| **📚 Smart Bookmarking** | AI auto-categorizes bookmarks—no more clutter |
+| **📚 Smart Bookmarking** | AI auto-categorizes bookmarks — no more clutter |
 | **🔧 Skill Extensions** | Install skill packs to extend AI capabilities |
-| **🔌 MCP Protocol** | Connect to external tools and services |
+| **🔌 MCP Protocol** | Connect to external tools and services via Model Context Protocol |
 | **📖 AI Reading Mode** | One-click webpage summarization |
-| **🛡️ Privacy First** | Runs locally, your data stays on your device |
-| **💬 WebSocket Streaming** | Real-time AI conversation with progress updates |
+| **🛡️ Privacy First** | Runs locally — browsing data stays on your device |
+| **💬 WebSocket Streaming** | Real-time AI conversation with live progress updates |
 | **🔄 Session Management** | Persistent chat sessions with full history |
+
+---
+
+## How It Works
+
+<img src="docs/screenshots/architecture.png" alt="UrchinAI architecture diagram — natural language input flows through AI agent to browser automation and multiple LLM providers" width="900" />
+
+1. **You describe the task** in the chat panel using natural language.
+2. **The AI agent** plans steps, calls browser tools, and streams progress in real time.
+3. **Your chosen LLM** (OpenAI, Claude, DeepSeek, etc.) powers reasoning — switch providers anytime.
+4. **Results stay local** — only AI chat messages are sent to your configured provider.
 
 ---
 
 ## Use Cases by Role
 
-### 👨‍💻 For Developers
+<details>
+<summary><b>👨‍💻 Developers</b> — API docs, code search, Stack Overflow, tech comparisons</summary>
 
-- **API Research**: "Find the Stripe API documentation for payment intents"
-- **Code Examples**: "Search GitHub for Python async examples and explain the best ones"
-- **Documentation**: "Open the React docs and find information about useEffect"
-- **Bug Hunting**: "Search Stack Overflow for this error message and show solutions"
-- **Tech Comparison**: "Compare Next.js and Nuxt.js features side by side"
+- "Find the Stripe API documentation for payment intents"
+- "Search GitHub for Python async examples and explain the best ones"
+- "Open the React docs and find information about useEffect"
+- "Search Stack Overflow for this error message and show solutions"
+</details>
 
-### 📊 For Marketers
+<details>
+<summary><b>📊 Marketers</b> — competitor research, SEO analysis, trend monitoring</summary>
 
-- **Competitor Analysis**: "Research our top 3 competitors and create a feature comparison"
-- **Trend Research**: "Find trending topics in AI for this week"
-- **Content Ideas**: "Search for popular blog post topics in the fitness niche"
-- **SEO Research**: "Analyze the top-ranking pages for 'best CRM software'"
-- **Review Monitoring**: "Check recent reviews for our product on G2"
+- "Research our top 3 competitors and create a feature comparison"
+- "Find trending topics in AI for this week"
+- "Analyze the top-ranking pages for 'best CRM software'"
+</details>
 
-### 🎓 For Students & Researchers
+<details>
+<summary><b>🎓 Students & Researchers</b> — academic search, note-taking, citations</summary>
 
-- **Academic Research**: "Search Google Scholar for papers on machine learning in healthcare"
-- **Note Taking**: "Extract key points from this Wikipedia article and create notes"
-- **Citation Gathering**: "Find 5 credible sources about climate change impacts"
-- **Translation**: "Translate this German research paper to English"
-- **Data Collection**: "Gather statistics about global internet usage from multiple sources"
+- "Search Google Scholar for papers on machine learning in healthcare"
+- "Extract key points from this Wikipedia article and create notes"
+- "Find 5 credible sources about climate change impacts"
+</details>
 
-### 💼 For Business Professionals
+<details>
+<summary><b>💼 Business · 🛒 Shopping · 🎨 Creative</b> — more scenarios</summary>
 
-- **Meeting Prep**: "Research this company before my meeting—find their products and recent news"
-- **Report Generation**: "Collect quarterly earnings data for FAANG companies"
-- **Email Drafting**: "Help me draft a professional email requesting a partnership"
-- **Contract Review**: "Highlight key terms in this Terms of Service page"
-- **Travel Planning**: "Find flights from NYC to London for next week and compare prices"
-
-### 🛒 For Shoppers
-
-- **Price Comparison**: "Compare iPhone 15 prices on Amazon, Best Buy, and Apple"
-- **Review Analysis**: "Summarize the top reviews for this product"
-- **Feature Research**: "Find all laptops with RTX 4060 under $1500"
-- **Deal Hunting**: "Search for discount codes for Nike"
-- **Product Research**: "Is this brand eco-friendly? Find their sustainability page"
-
-### 🎨 For Creatives
-
-- **Inspiration**: "Find award-winning website designs on Awwwards"
-- **Asset Gathering**: "Search for free stock photos of mountains"
-- **Color Research**: "Find trending color palettes for 2025"
-- **Font Discovery**: "Find Google Fonts similar to Helvetica"
-- **Tutorial Finding**: "Search YouTube for advanced Photoshop techniques"
+- Meeting prep, report generation, price comparison, deal hunting
+- Design inspiration, asset gathering, font and color research
+</details>
 
 ---
 
@@ -110,20 +149,20 @@ Whether you're a developer researching APIs, a marketer analyzing competitors, a
 
 ### Download & Install
 
-| Platform | Download |
-|----------|----------|
-| Windows | `.exe` installer + portable |
-| Linux | `.deb` package |
-| macOS | Coming soon |
+| Platform | Format | Status |
+|----------|--------|--------|
+| **Windows** | `.exe` installer + portable | ✅ Available |
+| **Linux** | `.deb` package | ✅ Available |
+| **macOS** | `.dmg` | 🔜 Coming soon |
 
-👉 [Download latest release](https://github.com/urchinai/browser/releases)
+👉 **[Download latest release](https://github.com/DLbury/UrchinAI/releases)**
 
 ### Configure AI Model
 
-On first use, configure your AI model. Open Settings → Models & Providers:
+On first launch, open **Settings → Models & Providers** and add your API key:
 
 ```json
-// Example config (located at ~/.nanobot/config.json)
+// Config file: ~/.nanobot/config.json
 {
   "providers": {
     "deepseek": {
@@ -154,23 +193,16 @@ On first use, configure your AI model. Open Settings → Models & Providers:
 
 ## Usage Examples
 
-### 💬 Conversational Control
-
 ```
 User: Help me search for MacBook Pro on JD.com and sort by price
-AI: [Navigate to JD] → [Search MacBook Pro] → [Click price sort] → Done!
+AI:  [Navigate to JD] → [Search MacBook Pro] → [Click price sort] → Done!
 
 User: Extract product specs from this page into a table
-AI: [Analyze page] → [Extract specs] → [Generate Markdown table]
-
-User: Find the Twitter profile of this author
-AI: [Search author name] → [Find Twitter link] → [Open profile]
+AI:  [Analyze page] → [Extract specs] → [Generate Markdown table]
 
 User: Summarize this 50-page PDF for me
-AI: [Process document] → [Extract key points] → [Create summary]
+AI:  [Process document] → [Extract key points] → [Create summary]
 ```
-
-### 🎯 Automation Scenarios
 
 <details>
 <summary><b>📊 Competitor Analysis</b></summary>
@@ -180,47 +212,29 @@ AI: [Process document] → [Extract key points] → [Create summary]
  collect their product features and pricing,
  and create a comparison table"
 ```
-AI: Search → Visit websites → Extract info → Format output
 </details>
 
 <details>
-<summary><b>📰 Daily News Digest</b></summary>
+<summary><b>📰 Daily News Digest · 🛒 Price Comparison · 🔍 Research Automation</b></summary>
 
-```
-"Check today's tech news headlines
- and summarize them into 5 key points"
-```
-AI: Open news sites → Scrape headlines → Summarize points
-</details>
-
-<details>
-<summary><b>🛒 Price Comparison</b></summary>
-
-```
-"Compare prices for this phone on Amazon and Best Buy"
-```
-AI: Search products → Extract prices → Compare and display
-</details>
-
-<details>
-<summary><b>📄 Document Processing</b></summary>
-
-```
-"Extract all links from this page and organize them by category"
-```
-AI: Scan page → Extract links → Categorize → Output list
-</details>
-
-<details>
-<summary><b>🔍 Research Automation</b></summary>
-
-```
-"Find 10 academic papers about renewable energy from 2024"
-```
-AI: Search academic DB → Filter by date → Collect results
+More automation templates for news summaries, multi-site price checks, and academic paper collection.
 </details>
 
 ---
+
+## Why UrchinAI?
+
+| | Traditional Browser | Browser Extension + ChatGPT | Closed AI Browser | **UrchinAI** |
+|--|--------------------|-----------------------------|-------------------|--------------|
+| Natural language control | ❌ | Partial | ✅ | ✅ |
+| Full browser automation | ❌ | ❌ | ✅ | ✅ |
+| **Open source** | N/A | Partial | ❌ | **✅ MIT** |
+| **Self-hosted / local** | ✅ | ❌ | ❌ | **✅** |
+| Choose your own LLM | ❌ | Partial | ❌ | **✅ 15+ providers** |
+| MCP & skill extensions | ❌ | ❌ | ❌ | **✅** |
+| Windows & Linux | ✅ | ✅ | Varies | **✅** |
+
+> Looking for an **open-source Atlas alternative**? UrchinAI gives you AI-native browsing without vendor lock-in.
 
 ---
 
@@ -229,39 +243,37 @@ AI: Search academic DB → Filter by date → Collect results
 ### Local Development
 
 ```bash
-# Clone repository
-git clone https://github.com/urchinai/browser.git
-cd browser
+git clone https://github.com/DLbury/UrchinAI.git
+cd UrchinAI
 
-# Install dependencies
 npm install
 pip install -r backend/requirements.txt
 
-# Dev mode
-npm run dev
-
-# Build release
-npm run dist
+npm run dev      # development
+npm run dist     # build release
 ```
+
+See [BUILD.md](BUILD.md) for packaging details (Windows `.exe`, Linux `.deb`).
 
 ### Project Structure
 
 ```
-urchinai-browser/
+UrchinAI/
 ├── electron/           # Electron main process
-├── src/                # React frontend
+├── src/                # React + TypeScript frontend
 ├── backend/            # Python FastAPI backend
-│   ├── agent/          # AI Agent implementation
-│   └── api/            # REST API
+│   ├── agent/          # AI agent & browser tools
+│   └── api/            # REST & WebSocket API
+├── docs/screenshots/   # README assets
 └── release/            # Build output
 ```
 
 ### Tech Stack
 
-- **Frontend**: React + TypeScript + TailwindCSS
-- **Backend**: Python + FastAPI + LiteLLM
-- **Desktop**: Electron
-- **AI**: Multi-LLM provider support
+- **Frontend**: React · TypeScript · TailwindCSS · Vite
+- **Backend**: Python · FastAPI · LiteLLM
+- **Desktop**: Electron 33
+- **AI**: Multi-LLM via LiteLLM + MCP protocol
 
 ---
 
@@ -276,6 +288,7 @@ urchinai-browser/
 - [ ] Voice input
 - [ ] Browser extension
 - [ ] Cloud sync
+- [ ] macOS release
 - [ ] Mobile companion
 
 ---
@@ -301,9 +314,9 @@ Via LiteLLM: OpenAI, Anthropic, Google, DeepSeek, Zhipu, Moonshot, MiniMax, Groq
 </details>
 
 <details>
-<summary><b>How do I add new skills?</b></summary>
+<summary><b>How is UrchinAI different from Atlas or Comet?</b></summary>
 
-Settings → Skills Management → Install from URL. Supports community-contributed skill.md files.
+UrchinAI is fully open-source (MIT), runs on your machine, and lets you bring your own API keys and LLM provider — no subscription lock-in.
 </details>
 
 <details>
@@ -316,33 +329,36 @@ Basic browsing requires internet. AI features need connectivity to your configur
 
 ## Contributing
 
-Contributions welcome! Report issues, suggest features, or submit PRs.
+Contributions welcome — issues, feature requests, and pull requests.
 
 ```bash
-# Fork and clone
-git clone https://github.com/YOUR_USERNAME/browser.git
-
-# Create branch
+git clone https://github.com/YOUR_USERNAME/UrchinAI.git
 git checkout -b feature/your-feature
-
-# Submit PR
+# ... make changes ...
+git push origin feature/your-feature
 ```
 
 ---
 
 ## Acknowledgments
 
-- [Electron](https://www.electronjs.org/) - Cross-platform desktop apps
-- [LiteLLM](https://github.com/BerriAI/litellm) - Unified LLM interface
-- [FastAPI](https://fastapi.tiangolo.com/) - Python web framework
-- [React](https://react.dev/) - UI framework
+- [Electron](https://www.electronjs.org/) · [LiteLLM](https://github.com/BerriAI/litellm) · [FastAPI](https://fastapi.tiangolo.com/) · [React](https://react.dev/)
 
 ---
 
 <div align="center">
 
-**[Download](https://github.com/urchinai/browser/releases) · [Issues](https://github.com/urchinai/browser/issues) · [Discussions](https://github.com/urchinai/browser/discussions)**
+**[Download](https://github.com/DLbury/UrchinAI/releases) · [Issues](https://github.com/DLbury/UrchinAI/issues) · [Discussions](https://github.com/DLbury/UrchinAI/discussions)**
 
-Made with ❤️ by UrchinAI Team
+<br/>
+
+<sub>
+Keywords: AI browser · open source browser · browser automation · AI agent · natural language browser ·
+LLM browser · Electron browser · web scraping · DeepSeek · Claude · GPT-4 · Atlas alternative · MCP browser
+</sub>
+
+<br/><br/>
+
+Made with ❤️ by the UrchinAI Team
 
 </div>
