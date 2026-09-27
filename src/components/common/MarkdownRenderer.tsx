@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Streamdown } from 'streamdown'
 import { X } from 'lucide-react'
 import { useTheme } from '../../hooks/useTheme'
@@ -31,6 +32,7 @@ interface TableModalProps {
 }
 
 function TableModal({ tableHtml, onClose, isDark }: TableModalProps) {
+  const { t } = useTranslation()
   const overlayRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -100,7 +102,7 @@ function TableModal({ tableHtml, onClose, isDark }: TableModalProps) {
             backgroundColor: styles.headerBg
           }}
         >
-          <span className="text-sm font-semibold" style={{ color: styles.headerText }}>表格详情</span>
+          <span className="text-sm font-semibold" style={{ color: styles.headerText }}>{t('markdown.tableDetails')}</span>
           <button
             onClick={onClose}
             className="p-2 rounded-lg transition-colors"

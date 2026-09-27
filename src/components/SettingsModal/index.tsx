@@ -3,10 +3,17 @@ import {
   X, Settings, Save, Plus, Trash2, Eye, EyeOff,
   Loader2, CheckCircle, Puzzle, Server, Terminal,
   Globe, Edit2, Check, AlertCircle, ExternalLink, BookOpen, Brain, Sparkles,
-  MousePointer2, Sun, Moon, Monitor, Bookmark, Cookie, Search,
+  MousePointer2, Sun, Moon, Monitor, Bookmark, Cookie, Search, ShieldOff,
+  RefreshCw,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { useTheme } from '../../hooks/useTheme'
+import i18n, { nativeLanguageName } from '../../i18n'
+import LanguagePicker from '../LanguagePicker'
+import ItemIcon, { DEFAULT_ICON_NAME, ICON_NAMES } from '../../lib/icons'
+import { categoryDisplayName, categoryIconName } from '../../lib/categories'
+import { formatDateTime } from '../../lib/format'
 import {
   getConfig, updateModel, updateProvider, deleteProvider,
   listSkills, installSkill, installLocalSkill, deleteSkill,
@@ -18,6 +25,7 @@ import {
   listCategories, addCategory, deleteCategory,
   getAgentLimits, updateAgentLimits, getSearchEngine, updateSearchEngine,
   getTranslationConfig, updateTranslationConfig,
+  fetchProviderModels,
 } from '../../api/client'
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
@@ -40,7 +48,7 @@ interface MCPServer {
   name: string; type: string; command?: string; args?: string[]
   url?: string; headers?: Record<string, string>; toolTimeout?: number
 }
-interface CategoryInfo { id: string; name: string; name_en: string; icon: string }
+interface CategoryInfo { id: string; name: string; name_en?: string; name_fa?: string; icon: string }
 interface CookieItem   { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly: boolean; sameSite: string; expirationDate?: number }
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
@@ -112,8 +120,8 @@ const PRESET_MODELS: Record<string, { label: string; value: string }[]> = {
 }
 
 const MCP_TEMPLATES = [
-  { name: 'filesystem', type: 'stdio' as const, command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/home'], description: '本地文件系统访问' },
-  { name: 'brave-search', type: 'stdio' as const, command: 'npx', args: ['-y', '@modelcontextprotocol/server-brave-search'], description: 'Brave 网页搜索' },
+  { name: 'filesystem', type: 'stdio' as const, command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/home'] },
+  { name: 'brave-search', type: 'stdio' as const, command: 'npx', args: ['-y', '@modelcontextprotocol/server-brave-search'] },
 ]
 
 // ── 工具函数 ─────────────────────────────────────────────────────────────────
@@ -139,18 +147,15 @@ function parseArgsSafe(s: string): string[] {
 
 // ── 模型配置标签页 ────────────────────────────────────────────────────────────
 
+/** Translation targets, labelled in their own endonym so they stay identifiable. */
 const TARGET_LANGUAGES = [
-  { label: '中文', value: '中文' },
-  { label: 'English', value: 'English' },
-  { label: '日本語', value: '日本語' },
-  { label: '한국어', value: '한국어' },
-  { label: 'Français', value: 'Français' },
-  { label: 'Deutsch', value: 'Deutsch' },
-  { label: 'Español', value: 'Español' },
-  { label: 'Русский', value: 'Русский' },
+  '中文', 'English', '日本語', '한국어',
+  'Français', 'Deutsch', 'Español', 'Русский',
+  'فارسی', 'العربية', 'Português', 'Italiano',
 ]
 
 function ModelTab() {
+  const { t } = useTranslation()
   const [currentModel, setCurrentModel] = useState('')
   const [currentProvider, setCurrentProvider] = useState('')
   const [providers, setProviders] = useState<ProviderRow[]>([])
@@ -162,7 +167,7 @@ function ModelTab() {
   // Translation settings
   const [transProvider, setTransProvider] = useState('')
   const [transModel, setTransModel] = useState('')
-  const [targetLang, setTargetLang] = useState('中文')
+  const [targetLang, setTargetLang] = useState(() => nativeLanguageName(i18n.language))
   const [transSave, triggerTransSave] = useSaveState()
 
   const load = useCallback(async () => {
@@ -205,7 +210,7 @@ function ModelTab() {
         const tCfg = await getTranslationConfig()
         setTransProvider(tCfg.provider || '')
         setTransModel(tCfg.model || '')
-        setTargetLang(tCfg.targetLang || '中文')
+        setTargetLang(tCfg.targetLang || nativeLanguageName(i18n.language))
       } catch {
         // fallback: use defaults
         setTransProvider(migratedProvider)
@@ -242,7 +247,7 @@ function ModelTab() {
   }
 
   const removeProvider = async (name: string) => {
-    if (!confirm(`确认删除服务商 "${name}"？`)) return
+    if (!confirm(t('settings.modelSection.deleteProviderConfirm', { name }))) return
     await deleteProvider(name)
     setProviders(p => p.filter(r => r.name !== name))
     // 如果当前选中的是这个服务商，清空选择
@@ -272,7 +277,7 @@ function ModelTab() {
 
   // 获取所有已配置的模型（用于当前模型选择）
   const allConfiguredModels = providers.flatMap(p =>
-    (p.models || []).map(m => ({ ...m, provider: p.name, providerLabel: PROVIDER_LABELS[p.name] || p.name }))
+    (p.models || []).map(m => ({ ...m, provider: p.name, providerLabel: providerLabel(t, p.name) }))
   )
 
   if (loading) return <div className="flex items-center justify-center h-48"><Loader2 size={24} className="animate-spin text-brand-400" /></div>
@@ -281,10 +286,10 @@ function ModelTab() {
     <div className="space-y-8">
       {/* ── 当前使用的模型 ── */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">当前使用的模型</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">{t('settings.modelSection.currentModel')}</h3>
         {allConfiguredModels.length === 0 ? (
           <div className="text-sm text-nb-text-muted py-2">
-            请先在下方配置服务商和模型
+            {t('settings.modelSection.configureFirst')}
           </div>
         ) : (
           <div className="grid gap-4">
@@ -297,9 +302,9 @@ function ModelTab() {
               }}
               className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
             >
-              <option value="">请选择模型…</option>
+              <option value="">{t('settings.modelSection.selectModel')}</option>
               {providers.filter(p => p.models?.length > 0).map(p => (
-                <optgroup key={p.name} label={PROVIDER_LABELS[p.name] || p.name}>
+                <optgroup key={p.name} label={providerLabel(t, p.name)}>
                   {p.models.map(m => (
                     <option key={`${p.name}|${m.value}`} value={`${p.name}|${m.value}`}>
                       {m.label}
@@ -311,7 +316,7 @@ function ModelTab() {
 
             {currentModel && (
               <p className="text-xs text-nb-text-muted font-mono bg-nb-card/50 rounded-lg px-3 py-1.5">
-                {PROVIDER_LABELS[currentProvider] || currentProvider} / {currentModel}
+                {providerLabel(t, currentProvider) || currentProvider} / {currentModel}
               </p>
             )}
 
@@ -320,7 +325,7 @@ function ModelTab() {
               {modelSave === 'saving' ? <Loader2 size={15} className="animate-spin" /> :
                modelSave === 'saved' ? <CheckCircle size={15} className="text-green-300" /> :
                <Save size={15} />}
-              {modelSave === 'saved' ? '已保存！' : '保存当前模型'}
+              {modelSave === 'saved' ? t('settings.modelSection.saved') : t('settings.modelSection.saveCurrentModel')}
             </button>
           </div>
         )}
@@ -328,12 +333,12 @@ function ModelTab() {
 
       {/* ── 翻译设置 ── */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">翻译设置</h3>
-        <p className="text-xs text-nb-text-dim mb-4">配置划词翻译使用的模型和目标语言。</p>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">{t('settings.modelSection.translation')}</h3>
+        <p className="text-xs text-nb-text-dim mb-4">{t('settings.modelSection.translationDesc')}</p>
         <div className="grid gap-4">
           {/* 翻译模型 */}
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1.5">翻译模型</label>
+            <label className="block text-xs text-nb-text-dim mb-1.5">{t('settings.modelSection.translationModel')}</label>
             <select
               value={transProvider ? `${transProvider}|${transModel}` : ''}
               onChange={e => {
@@ -343,9 +348,9 @@ function ModelTab() {
               }}
               className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
             >
-              <option value="">使用默认模型</option>
+              <option value="">{t('settings.modelSection.defaultModel')}</option>
               {providers.filter(p => p.models?.length > 0).map(p => (
-                <optgroup key={p.name} label={PROVIDER_LABELS[p.name] || p.name}>
+                <optgroup key={p.name} label={providerLabel(t, p.name)}>
                   {p.models.map(m => (
                     <option key={`${p.name}|${m.value}`} value={`${p.name}|${m.value}`}>
                       {m.label}
@@ -356,21 +361,22 @@ function ModelTab() {
             </select>
             {transModel && (
               <p className="text-xs text-nb-text-muted font-mono bg-nb-card/50 rounded-lg px-3 py-1.5 mt-2">
-                {PROVIDER_LABELS[transProvider] || transProvider} / {transModel}
+                {providerLabel(t, transProvider) || transProvider} / {transModel}
               </p>
             )}
           </div>
 
           {/* 目标语言 */}
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1.5">目标语言</label>
+            <label className="block text-xs text-nb-text-dim mb-1.5">{t('settings.modelSection.targetLang')}</label>
             <select
               value={targetLang}
               onChange={e => setTargetLang(e.target.value)}
               className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand-500 appearance-none"
             >
+              {!TARGET_LANGUAGES.includes(targetLang) && <option value={targetLang}>{targetLang}</option>}
               {TARGET_LANGUAGES.map(lang => (
-                <option key={lang.value} value={lang.value}>{lang.label}</option>
+                <option key={lang} value={lang}>{lang}</option>
               ))}
             </select>
           </div>
@@ -380,15 +386,15 @@ function ModelTab() {
             {transSave === 'saving' ? <Loader2 size={15} className="animate-spin" /> :
              transSave === 'saved' ? <CheckCircle size={15} className="text-green-300" /> :
              <Save size={15} />}
-            {transSave === 'saved' ? '已保存！' : '保存翻译设置'}
+            {transSave === 'saved' ? t('settings.modelSection.savedTranslation') : t('settings.modelSection.saveTranslation')}
           </button>
         </div>
       </section>
 
       {/* ── API 服务商配置 ── */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">API 服务商配置</h3>
-        <p className="text-xs text-nb-text-dim mb-4">配置服务商的 API Key 和可用模型列表。每个服务商可以添加多个模型。</p>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">{t('settings.modelSection.providers')}</h3>
+        <p className="text-xs text-nb-text-dim mb-4">{t('settings.modelSection.providersDesc')}</p>
         <div className="space-y-4">
           {providers.map((row, idx) => (
             <ProviderCard
@@ -404,17 +410,17 @@ function ModelTab() {
           <div className="flex gap-2 pt-2">
             <select value={newProviderName} onChange={e => setNewProviderName(e.target.value)}
               className="text-nb-text-soft flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500">
-              <option value="">选择要添加的服务商…</option>
+              <option value="">{t('settings.modelSection.selectProvider')}</option>
               {KNOWN_PROVIDERS.filter(p => !providers.find(r => r.name === p)).map(p => (
-                <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
+                <option key={p} value={p}>{providerLabel(t, p)}</option>
               ))}
             </select>
             <input value={newProviderName} onChange={e => setNewProviderName(e.target.value)}
-              placeholder="自定义名称"
+              placeholder={t('settings.modelSection.customName')}
               className="text-nb-text-soft w-28 bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
             <button onClick={addProvider} disabled={!newProviderName.trim()}
               className="px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-40 disabled:hover:bg-brand-600 transition-colors text-sm">
-              添加
+              {t('settings.modelSection.add')}
             </button>
           </div>
         </div>
@@ -429,43 +435,81 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
   onSave: () => void
   onDelete: () => void
 }) {
+  const { t } = useTranslation()
   const [saveState, triggerSave] = useSaveState()
+  const [fetching, setFetching] = useState(false)
+  const [fetchNote, setFetchNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const [showAll, setShowAll] = useState(false)
 
-  const handleSave = async () => { await onSave(); triggerSave() }
+  // Providers that have to be pointed at a self-hosted endpoint by hand.
+  const needsBaseUrl = row.name === 'custom' || row.name === 'vllm'
 
-  // 自动保存模型列表
   const saveModels = async (models: ModelItem[]) => {
     await updateProvider(row.name, {
       apiKey: row.apiKey !== MASKED ? row.apiKey : undefined,
-      apiBase: row.apiBase,
+      apiBase: needsBaseUrl ? row.apiBase : undefined,
       models,
     })
     triggerSave()
   }
 
-  // 添加模型并自动保存
+  // Ask the provider for its catalogue and add everything it returns.
+  const syncModels = async () => {
+    if (!row.apiKey || row.apiKey === MASKED) return
+    setFetching(true)
+    setFetchNote(null)
+    try {
+      const { models } = await fetchProviderModels(row.name, row.apiKey)
+      const merged = [...row.models]
+      let added = 0
+      for (const m of models) {
+        if (merged.some(x => x.value === m.value)) continue
+        merged.push({ label: m.label, value: m.value })
+        added++
+      }
+      onChange({ models: merged })
+      await saveModels(merged)
+      setFetchNote({
+        ok: true,
+        text: t('settings.modelSection.modelsFetched', {
+          count: models.length,
+          free: models.filter(m => m.isFree).length,
+          added,
+        }),
+      })
+    } catch (err) {
+      setFetchNote({ ok: false, text: (err as Error).message })
+    } finally {
+      setFetching(false)
+    }
+  }
+
+  // Saving the key is what triggers discovery, so one click does both.
+  const handleSave = async () => {
+    await onSave()
+    await syncModels()
+    triggerSave()
+  }
+
+  // Adding the key and pressing Enter should do the same thing.
+  const handleKeyEnter = () => { void handleSave() }
+
   const addModel = async () => {
     const label = row.newModelLabel.trim()
     const value = row.newModelValue.trim()
     if (!label || !value) return
     if (row.models.find(m => m.value === value)) return
     const newModels = [...row.models, { label, value }]
-    onChange({
-      models: newModels,
-      newModelLabel: '',
-      newModelValue: '',
-    })
+    onChange({ models: newModels, newModelLabel: '', newModelValue: '' })
     await saveModels(newModels)
   }
 
-  // 删除模型并自动保存
   const removeModel = async (value: string) => {
     const newModels = row.models.filter(m => m.value !== value)
     onChange({ models: newModels })
     await saveModels(newModels)
   }
 
-  // 从预设添加模型并自动保存
   const addFromPresets = async (model: { label: string; value: string }) => {
     if (row.models.find(m => m.value === model.value)) return
     const newModels = [...row.models, model]
@@ -475,72 +519,113 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
 
   const presets = PRESET_MODELS[row.name] || []
   const suggestedModels = presets.filter(p => !row.models.find(m => m.value === p.value))
+  const visibleModels = showAll ? row.models : row.models.slice(0, 24)
 
   return (
     <div className="bg-nb-card border border-nb-border rounded-2xl p-4 space-y-4">
       {/* 标题栏 */}
       <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-brand-400">{PROVIDER_LABELS[row.name] || row.name}</span>
+        <span className="text-sm font-semibold text-brand-400">{providerLabel(t, row.name)}</span>
         <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-muted hover:text-red-600 dark:hover:text-red-400 transition-colors">
           <Trash2 size={14} />
         </button>
       </div>
 
-      {/* API Key */}
+      {/* API Key — 唯一的输入项；保存后自动拉取该服务商的全部模型 */}
       <div>
-        <label className="block text-xs text-nb-text-dim mb-1">API Key</label>
+        <label className="block text-xs text-nb-text-dim mb-1">{t('settings.modelSection.apiKey')}</label>
         <div className="relative">
           <input type={row.showKey ? 'text' : 'password'} value={row.apiKey}
-            onChange={e => onChange({ apiKey: e.target.value })}
-            placeholder="sk-… 或 Bearer token"
+            onChange={e => { onChange({ apiKey: e.target.value }); setFetchNote(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') handleKeyEnter() }}
+            placeholder={t('settings.modelSection.apiKeyPlaceholder')}
             className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm pr-9 outline-none focus:border-brand-500 transition-colors" />
           <button onClick={() => onChange({ showKey: !row.showKey })}
+            title={row.showKey ? t('settings.modelSection.hideKey') : t('settings.modelSection.showKey')}
+            aria-label={row.showKey ? t('settings.modelSection.hideKey') : t('settings.modelSection.showKey')}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-nb-text-dim hover:text-nb-text-soft">
             {row.showKey ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
         </div>
-      </div>
-
-      {/* API Base URL */}
-      <div>
-        <label className="block text-xs text-nb-text-dim mb-1">
-          API Base URL <span className="text-nb-text-muted">（可选）</span>
-        </label>
-        <input value={row.apiBase} onChange={e => onChange({ apiBase: e.target.value })}
-          placeholder="例如 http://192.168.x.x:11434 或 …:1234/v1"
-          className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500 transition-colors" />
         <p className="mt-1 text-[10px] text-nb-text-muted leading-relaxed">
-          须指向提供 OpenAI 兼容接口的服务；程序会请求「Base + /v1/chat/completions」。Ollama 多为端口 11434；LM Studio 常为 /v1；若出现 404，请核对端口是否真是推理服务而非其它网站。
+          {t('settings.modelSection.apiKeyHint')}
         </p>
       </div>
 
+      {/* API Base URL：仅自建服务需要填写 */}
+      {needsBaseUrl && (
+        <div>
+          <label className="block text-xs text-nb-text-dim mb-1">
+            {t('settings.modelSection.apiBase')} <span className="text-nb-text-muted">({t('common.optional')})</span>
+          </label>
+          <input value={row.apiBase} onChange={e => onChange({ apiBase: e.target.value })}
+            placeholder={t('settings.modelSection.apiBasePlaceholder')}
+            className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500 transition-colors" />
+          <p className="mt-1 text-[10px] text-nb-text-muted leading-relaxed">
+            {t('settings.modelSection.apiBaseHint')}
+          </p>
+        </div>
+      )}
+
       {/* 模型列表 */}
       <div>
-        <label className="block text-xs text-nb-text-dim mb-2">可用模型</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-xs text-nb-text-dim">
+            {t('settings.modelSection.availableModels')}
+            {row.models.length > 0 && <span className="text-nb-text-muted"> · {row.models.length}</span>}
+          </label>
+          <button onClick={() => void syncModels()} disabled={fetching || !row.apiKey}
+            title={t('settings.modelSection.fetchModels')}
+            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-nb-border text-nb-text-dim hover:border-brand-500 hover:text-brand-400 disabled:opacity-40 transition-colors">
+            {fetching ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+            {t('settings.modelSection.fetchModels')}
+          </button>
+        </div>
+
+        {fetchNote && (
+          <p className={`mb-2 text-[10px] ${fetchNote.ok ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+            {fetchNote.text}
+          </p>
+        )}
 
         {/* 已配置的模型 */}
         {row.models.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {row.models.map(m => (
-              <div key={m.value} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-nb-raised border border-nb-border text-xs">
-                <span className="text-nb-text-soft">{m.label}</span>
-                <button onClick={() => removeModel(m.value)} className="text-nb-text-muted hover:text-red-400">
-                  <X size={10} />
-                </button>
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {visibleModels.map(m => (
+                <div key={m.value} title={m.value} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-nb-raised border border-nb-border text-xs max-w-full">
+                  <span className="text-nb-text-soft truncate">{m.label}</span>
+                  {m.value.endsWith(':free') && (
+                    <span className="shrink-0 text-[9px] px-1 rounded bg-green-500/15 text-green-600 dark:text-green-400">
+                      {t('settings.modelSection.freeBadge')}
+                    </span>
+                  )}
+                  <button onClick={() => removeModel(m.value)} aria-label={t('settings.modelSection.removeModel', { name: m.label })}
+                    className="shrink-0 text-nb-text-muted hover:text-red-400">
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            {row.models.length > visibleModels.length && (
+              <button onClick={() => setShowAll(true)}
+                className="mb-2 text-[10px] text-nb-text-muted hover:text-brand-400">
+                {t('settings.modelSection.showAllModels', { count: row.models.length })}
+              </button>
+            )}
+          </>
         )}
 
         {/* 添加自定义模型 */}
         <div className="flex gap-2 mb-2">
           <input value={row.newModelLabel} onChange={e => onChange({ newModelLabel: e.target.value })}
-            placeholder="显示名"
+            placeholder={t('settings.modelSection.displayName')}
             className="text-nb-text-soft flex-1 bg-nb-raised border border-nb-border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-brand-500" />
           <input value={row.newModelValue} onChange={e => onChange({ newModelValue: e.target.value })}
-            placeholder="模型ID"
+            placeholder={t('settings.modelSection.modelId')}
             className="text-nb-text-soft flex-1 bg-nb-raised border border-nb-border rounded-lg px-2 py-1.5 text-xs font-mono outline-none focus:border-brand-500" />
           <button onClick={addModel} disabled={!row.newModelLabel.trim() || !row.newModelValue.trim()}
+            aria-label={t('settings.modelSection.add')}
             className="px-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-40 transition-colors">
             <Plus size={14} />
           </button>
@@ -549,7 +634,7 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
         {/* 推荐模型 */}
         {suggestedModels.length > 0 && (
           <div>
-            <p className="text-[10px] text-nb-text-muted mb-1">推荐模型（点击添加）：</p>
+            <p className="text-[10px] text-nb-text-muted mb-1">{t('settings.modelSection.suggestedModels')}</p>
             <div className="flex flex-wrap gap-1">
               {suggestedModels.map(m => (
                 <button key={m.value} onClick={() => addFromPresets(m)}
@@ -562,19 +647,21 @@ function ProviderCard({ row, onChange, onSave, onDelete }: {
         )}
       </div>
 
-      {/* 保存按钮（仅保存 API Key 和 Base URL） */}
-      <button onClick={handleSave}
-        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-nb-card border border-nb-border hover:bg-nb-raised text-nb-text-soft transition-colors">
-        {saveState === 'saving' ? <Loader2 size={12} className="animate-spin" /> :
+      {/* 保存：写入 Key，然后自动同步全部模型（免费与非免费） */}
+      <button onClick={handleSave} disabled={fetching}
+        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-nb-card border border-nb-border hover:bg-nb-raised text-nb-text-soft disabled:opacity-50 transition-colors">
+        {saveState === 'saving' || fetching ? <Loader2 size={12} className="animate-spin" /> :
          saveState === 'saved' ? <CheckCircle size={12} className="text-green-600 dark:text-green-400" /> :
          <Save size={12} />}
-        {saveState === 'saved' ? '已保存' : '保存 API 配置'}
+        {fetching ? t('settings.modelSection.fetchingModels')
+          : saveState === 'saved' ? t('settings.modelSection.savedApi')
+          : t('settings.modelSection.saveApi')}
       </button>
     </div>
   )
 }
 
-// 服务商显示名称（提取为常量，供其他组件使用）
+// 服务商显示名称（品牌名保持拉丁文，自定义项走翻译）
 const PROVIDER_LABELS: Record<string, string> = {
   openrouter: 'OpenRouter',
   anthropic: 'Anthropic',
@@ -584,19 +671,24 @@ const PROVIDER_LABELS: Record<string, string> = {
   groq: 'Groq',
   minimax: 'MiniMax',
   moonshot: 'Moonshot',
-  zhipu: '智谱 AI',
-  dashscope: '通义千问',
-  volcengine: '火山引擎',
+  zhipu: 'Zhipu AI',
+  dashscope: 'Qwen (DashScope)',
+  volcengine: 'Volcano Engine',
   siliconflow: 'SiliconFlow',
   aihubmix: 'AIHubMix',
   azure_openai: 'Azure OpenAI',
   vllm: 'vLLM',
-  custom: '自定义',
+}
+
+function providerLabel(t: TFunction, name: string): string {
+  if (name === 'custom') return t('settings.providers.custom')
+  return PROVIDER_LABELS[name] || name
 }
 
 // ── 技能标签页 ────────────────────────────────────────────────────────────────
 
 function SkillsTab() {
+  const { t } = useTranslation()
   const [skills, setSkills] = useState<Skill[]>([])
   const [loading, setLoading] = useState(true)
   const [installUrl, setInstallUrl] = useState('')
@@ -637,7 +729,7 @@ function SkillsTab() {
       )
       setHubSkills(filtered)
     } catch (err) {
-      setHubError('搜索失败: ' + String(err))
+      setHubError(t('settings.skills.searchFailed', { error: String(err) }))
     } finally {
       setSearching(false)
     }
@@ -653,7 +745,7 @@ function SkillsTab() {
       hubSkillsCache.current = d.skills
       setHubSkills(d.skills)
     } catch (err) {
-      setHubError('加载 Anthropic Skills 失败: ' + String(err))
+      setHubError(t('settings.skills.loadFailed', { error: String(err) }))
     } finally {
       setHubLoading(false)
     }
@@ -685,7 +777,7 @@ function SkillsTab() {
       await installLocalSkill(skillName, content)
       await reload()
     } catch (err) {
-      setError('本地安装失败: ' + String(err))
+      setError(t('settings.skills.localInstallFailed', { error: String(err) }))
     } finally {
       setInstalling(false)
       // 重置 input
@@ -698,10 +790,10 @@ function SkillsTab() {
       {/* 已安装 */}
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4 flex items-center gap-2">
-          已安装的技能 {loading && <Loader2 size={12} className="animate-spin" />}
+          {t('settings.skills.installed')} {loading && <Loader2 size={12} className="animate-spin" />}
         </h3>
         {skills.length === 0 && !loading
-          ? <div className="flex items-center gap-2 text-sm text-nb-text-muted py-2"><BookOpen size={14} />暂未安装任何技能</div>
+          ? <div className="flex items-center gap-2 text-sm text-nb-text-muted py-2"><BookOpen size={14} />{t('settings.skills.noSkills')}</div>
           : <div className="space-y-2">
               {skills.map(s => (
                 <div key={s.id} className="flex items-start justify-between gap-3 bg-nb-card border border-nb-border rounded-2xl px-4 py-3">
@@ -727,29 +819,29 @@ function SkillsTab() {
       <section>
         {!showAnthropic ? (
           <>
-            <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">Skills Hub</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">{t('settings.skills.hubTitle')}</h3>
             <button
               onClick={loadAnthropicHub}
               className="flex items-center gap-3 p-4 rounded-xl border border-nb-border bg-nb-card hover:border-brand-500/50 transition-colors text-left w-full"
             >
               <div className="w-10 h-10 rounded-lg bg-orange-500/20 flex items-center justify-center shrink-0">
-                <span className="text-lg">🅰️</span>
+                <Sparkles size={20} className="text-orange-400" />
               </div>
               <div>
-                <p className="text-sm font-medium">Anthropic Skills</p>
-                <p className="text-xs text-nb-text-muted">官方 Skills 仓库 · 点击加载</p>
+                <p className="text-sm font-medium">{t('settings.skills.anthropicTitle')}</p>
+                <p className="text-xs text-nb-text-muted">{t('settings.skills.hubDesc')}</p>
               </div>
             </button>
           </>
         ) : (
           <>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted">Anthropic Skills</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted">{t('settings.skills.anthropicTitle')}</h3>
               <button
                 onClick={() => setShowAnthropic(false)}
                 className="text-xs text-nb-text-muted hover:text-nb-text-soft transition-colors"
               >
-                收起
+                {t('settings.skills.collapse')}
               </button>
             </div>
 
@@ -759,7 +851,7 @@ function SkillsTab() {
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') searchAnthropicSkills() }}
-                placeholder="搜索技能名称..."
+                placeholder={t('settings.skills.searchPlaceholder')}
                 className="text-nb-text-soft flex-1 bg-nb-card border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500"
               />
               <button
@@ -767,14 +859,14 @@ function SkillsTab() {
                 disabled={searching}
                 className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-sm font-medium transition-colors"
               >
-                {searching ? <Loader2 size={14} className="animate-spin" /> : '搜索'}
+                {searching ? <Loader2 size={14} className="animate-spin" /> : t('settings.skills.search')}
               </button>
               {searchQuery && (
                 <button
                   onClick={() => { setSearchQuery(''); loadAnthropicHub() }}
                   className="px-3 py-2 rounded-xl bg-nb-card border border-nb-border text-nb-text-muted hover:text-nb-text-soft transition-colors"
                 >
-                  清除
+                  {t('settings.skills.clear')}
                 </button>
               )}
             </div>
@@ -791,7 +883,7 @@ function SkillsTab() {
                 </div>
               ) : hubSkills.length === 0 ? (
                 <div className="flex items-center gap-2 text-sm text-nb-text-muted py-4">
-                  <BookOpen size={14} />{searchQuery ? '未找到匹配的技能' : '暂无可用技能'}
+                  <BookOpen size={14} />{searchQuery ? t('settings.skills.noMatches') : t('settings.skills.noAvailable')}
                 </div>
               ) : (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
@@ -806,14 +898,14 @@ function SkillsTab() {
                         <div className="flex items-center gap-2 shrink-0">
                           <a href={s.url} target="_blank" rel="noopener noreferrer"
                             className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-muted hover:text-nb-text-soft transition-colors"
-                            title="查看源文件">
+                            title={t('settings.skills.viewSource')}>
                             <ExternalLink size={13} />
                           </a>
                           {installed
-                            ? <span className="text-xs text-green-600 dark:text-green-400 font-medium">已安装</span>
+                            ? <span className="text-xs text-green-600 dark:text-green-400 font-medium">{t('settings.skills.installedBadge')}</span>
                             : <button onClick={() => handleInstall(s.url, s.id.toLowerCase())} disabled={installing}
                                 className="text-xs px-3 py-1.5 rounded-lg bg-brand-700 hover:bg-brand-600 text-white transition-colors font-medium">
-                                安装
+                                {t('settings.skills.install')}
                               </button>
                           }
                         </div>
@@ -829,9 +921,9 @@ function SkillsTab() {
 
       {/* 本地安装 */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">本地安装</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">{t('settings.skills.localInstall')}</h3>
         <div className="space-y-3">
-          <p className="text-xs text-nb-text-muted">选择本地的 skill.md 文件进行安装</p>
+          <p className="text-xs text-nb-text-muted">{t('settings.skills.localInstallDesc')}</p>
           <input
             ref={fileInputRef}
             type="file"
@@ -845,23 +937,23 @@ function SkillsTab() {
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-nb-card border border-nb-border hover:border-brand-500/50 text-sm font-medium transition-colors"
           >
             {installing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            选择文件
+            {t('settings.skills.chooseFile')}
           </button>
         </div>
       </section>
 
       {/* 从 URL 安装 */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">从链接安装技能</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">{t('settings.skills.installFromUrl')}</h3>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1">技能链接（skill.md）</label>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.skills.skillUrl')}</label>
             <input value={installUrl} onChange={e => setInstallUrl(e.target.value)}
               placeholder="https://…/skill.md"
               className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
           </div>
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1">目录名 <span className="text-nb-text-muted">（可选）</span></label>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.skills.dirName')} <span className="text-nb-text-muted">({t('common.optional')})</span></label>
             <input value={installName} onChange={e => setInstallName(e.target.value)}
               placeholder="my-skill"
               className="text-nb-text-soft w-full bg-nb-card border border-nb-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-500" />
@@ -874,7 +966,7 @@ function SkillsTab() {
           <button onClick={() => handleInstall()} disabled={!installUrl.trim() || installing}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-sm font-medium transition-colors">
             {installing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            安装技能
+            {t('settings.skills.installSkill')}
           </button>
         </div>
       </section>
@@ -891,6 +983,7 @@ interface MCPFormState {
 const emptyForm = (): MCPFormState => ({ name: '', type: 'stdio', command: '', args: '', env: '', url: '', headers: '', toolTimeout: '30' })
 
 function MCPTab() {
+  const { t } = useTranslation()
   const [servers, setServers] = useState<MCPServer[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -915,9 +1008,9 @@ function MCPTab() {
   }
 
   const handleSubmit = async () => {
-    if (!form.name.trim()) { setError('名称不能为空'); return }
-    if (form.type === 'stdio' && !form.command.trim()) { setError('命令不能为空'); return }
-    if (form.type === 'http' && !form.url.trim()) { setError('URL 不能为空'); return }
+    if (!form.name.trim()) { setError(t('settings.mcp.errName')); return }
+    if (form.type === 'stdio' && !form.command.trim()) { setError(t('settings.mcp.errCommand')); return }
+    if (form.type === 'http' && !form.url.trim()) { setError(t('settings.mcp.errUrl')); return }
     setSaving(true); setError('')
     try {
       const payload: Record<string, unknown> = { name: form.name.trim(), type: form.type, toolTimeout: parseInt(form.toolTimeout) || 30 }
@@ -932,14 +1025,14 @@ function MCPTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted flex items-center gap-2">
-          MCP 服务器 {loading && <Loader2 size={12} className="animate-spin" />}
+          {t('settings.mcp.title')} {loading && <Loader2 size={12} className="animate-spin" />}
         </h3>
         <button onClick={openAdd} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-brand-700 hover:bg-brand-600 text-white transition-colors font-medium">
-          <Plus size={12} /> 添加服务器
+          <Plus size={12} /> {t('settings.mcp.add')}
         </button>
       </div>
 
-      {servers.length === 0 && !loading && <p className="text-sm text-nb-text-muted py-2">暂未配置 MCP 服务器</p>}
+      {servers.length === 0 && !loading && <p className="text-sm text-nb-text-muted py-2">{t('settings.mcp.empty')}</p>}
       <div className="space-y-2">
         {servers.map(s => (
           <div key={s.name} className="flex items-start justify-between gap-3 bg-nb-card border border-nb-border rounded-2xl px-4 py-3">
@@ -953,7 +1046,9 @@ function MCPTab() {
             <div className="flex gap-1 shrink-0">
               <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${s.type === 'stdio' ? 'bg-orange-900/50 text-orange-300' : 'bg-blue-900/50 text-blue-300'}`}>{s.type}</span>
               <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-muted hover:text-nb-text-soft transition-colors"><Edit2 size={13} /></button>
-              <button onClick={async () => { if (!confirm(`确认删除 "${s.name}"？`)) return; await deleteMCPServer(s.name); setServers(p => p.filter(x => x.name !== s.name)) }}
+              <button onClick={async () => { if (!confirm(t('settings.mcp.deleteConfirm', { name: s.name }))) return; await deleteMCPServer(s.name); setServers(p => p.filter(x => x.name !== s.name)) }}
+                title={t('settings.mcp.deleteConfirm', { name: s.name })}
+                aria-label={t('settings.mcp.deleteConfirm', { name: s.name })}
                 className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-muted hover:text-red-600 dark:hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
             </div>
           </div>
@@ -964,49 +1059,49 @@ function MCPTab() {
       {showForm && (
         <div className="bg-nb-card border border-nb-border rounded-2xl p-5 space-y-4">
           <div className="flex items-center justify-between">
-            <h4 className="text-sm font-semibold">{editingName ? `编辑 "${editingName}"` : '新建 MCP 服务器'}</h4>
-            <button onClick={() => setShowForm(false)} className="p-1 rounded-lg hover:bg-nb-raised text-nb-text-dim"><X size={14} /></button>
+            <h4 className="text-sm font-semibold">{editingName ? t('settings.mcp.editTitle', { name: editingName }) : t('settings.mcp.newTitle')}</h4>
+            <button onClick={() => setShowForm(false)} title={t('common.close')} aria-label={t('common.close')} className="p-1 rounded-lg hover:bg-nb-raised text-nb-text-dim"><X size={14} /></button>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-nb-text-dim mb-1">名称</label>
+              <label className="block text-xs text-nb-text-dim mb-1">{t('settings.mcp.name')}</label>
               <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="my-server"
                 className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
             </div>
             <div>
-              <label className="block text-xs text-nb-text-dim mb-1">类型</label>
+              <label className="block text-xs text-nb-text-dim mb-1">{t('settings.mcp.type')}</label>
               <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as 'stdio' | 'http' }))}
                 className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500">
-                <option value="stdio">stdio（本地进程）</option>
-                <option value="http">http（远程端点）</option>
+                <option value="stdio">{t('settings.mcp.typeStdio')}</option>
+                <option value="http">{t('settings.mcp.typeHttp')}</option>
               </select>
             </div>
           </div>
           {form.type === 'stdio' ? (<>
             <div>
-              <label className="block text-xs text-nb-text-dim mb-1">命令</label>
+              <label className="block text-xs text-nb-text-dim mb-1">{t('settings.mcp.command')}</label>
               <input value={form.command} onChange={e => setForm(f => ({ ...f, command: e.target.value }))} placeholder="npx"
                 className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
             </div>
             <div>
-              <label className="block text-xs text-nb-text-dim mb-1">参数（JSON 数组或逗号分隔）</label>
+              <label className="block text-xs text-nb-text-dim mb-1">{t('settings.mcp.args')}</label>
               <input value={form.args} onChange={e => setForm(f => ({ ...f, args: e.target.value }))} placeholder='["-y", "@mcp/server"]'
                 className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:border-brand-500" />
             </div>
           </>) : (<>
             <div>
-              <label className="block text-xs text-nb-text-dim mb-1">URL</label>
+              <label className="block text-xs text-nb-text-dim mb-1">{t('settings.mcp.url')}</label>
               <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://mcp.example.com/sse"
                 className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
             </div>
             <div>
-              <label className="block text-xs text-nb-text-dim mb-1">请求头（JSON）</label>
+              <label className="block text-xs text-nb-text-dim mb-1">{t('settings.mcp.headers')}</label>
               <input value={form.headers} onChange={e => setForm(f => ({ ...f, headers: e.target.value }))} placeholder='{"Authorization":"Bearer …"}'
                 className="text-nb-text-soft w-full bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm font-mono outline-none focus:border-brand-500" />
             </div>
           </>)}
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1">超时时间（秒）</label>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.mcp.timeout')}</label>
             <input type="number" value={form.toolTimeout} onChange={e => setForm(f => ({ ...f, toolTimeout: e.target.value }))}
               className="text-nb-text-soft w-24 bg-nb-raised border border-nb-border rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-500" />
           </div>
@@ -1015,16 +1110,16 @@ function MCPTab() {
             <button onClick={handleSubmit} disabled={saving}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-sm font-medium transition-colors">
               {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-              {editingName ? '更新' : '添加'}
+              {editingName ? t('settings.mcp.update') : t('settings.mcp.add')}
             </button>
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 rounded-xl bg-nb-card border border-nb-border hover:bg-nb-raised text-nb-text-soft text-sm transition-colors">取消</button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-2 rounded-xl bg-nb-card border border-nb-border hover:bg-nb-raised text-nb-text-soft text-sm transition-colors">{t('settings.mcp.cancel')}</button>
           </div>
         </div>
       )}
 
       {/* 快速模板 */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">快速模板</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-nb-text-muted mb-4">{t('settings.mcp.templates')}</h3>
         <div className="space-y-2">
           {MCP_TEMPLATES.map(tmpl => {
             const installed = servers.some(s => s.name === tmpl.name)
@@ -1032,16 +1127,16 @@ function MCPTab() {
               <div key={tmpl.name} className="flex items-center justify-between gap-3 bg-nb-card border border-nb-border rounded-2xl px-4 py-3">
                 <div>
                   <p className="text-sm font-medium">{tmpl.name}</p>
-                  <p className="text-xs text-nb-text-muted">{tmpl.description}</p>
+                  <p className="text-xs text-nb-text-muted">{t(`settings.mcp.templateDesc.${tmpl.name}`)}</p>
                   <p className="text-xs text-nb-text-muted font-mono">{tmpl.command} {tmpl.args.join(' ')}</p>
                 </div>
                 {installed
-                  ? <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">已添加</span>
+                  ? <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">{t('settings.mcp.addedBadge')}</span>
                   : <button
                       onClick={async () => { setSaving(true); try { await addMCPServer({ name: tmpl.name, type: tmpl.type, command: tmpl.command, args: tmpl.args, toolTimeout: 30 }); await reload() } finally { setSaving(false) } }}
                       disabled={saving}
                       className="text-xs px-3 py-1.5 rounded-lg bg-brand-700 hover:bg-brand-600 text-white transition-colors font-medium shrink-0">
-                      添加
+                      {t('settings.mcp.addShort')}
                     </button>
                 }
               </div>
@@ -1057,32 +1152,28 @@ function MCPTab() {
 
 type MemorySubTab = 'prompt' | 'archive' | 'skills'
 
-function formatTime(ts: number) {
-  const d = new Date(ts * 1000)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
-
 function MemoryTab() {
+  const { t } = useTranslation()
   const [subTab, setSubTab] = useState<MemorySubTab>('prompt')
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-1 p-1 bg-nb-raised rounded-lg w-fit">
         {([
-          { id: 'prompt', label: 'Prompt 记忆' },
-          { id: 'archive', label: '历史归档' },
-          { id: 'skills', label: '技能文档' },
-        ] as const).map(t => (
+          { id: 'prompt', label: t('settings.memory.prompt') },
+          { id: 'archive', label: t('settings.memory.archive') },
+          { id: 'skills', label: t('settings.memory.skills') },
+        ] as const).map(item => (
           <button
-            key={t.id}
-            onClick={() => setSubTab(t.id)}
+            key={item.id}
+            onClick={() => setSubTab(item.id)}
             className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-              subTab === t.id
+              subTab === item.id
                 ? 'bg-nb-card text-nb-text shadow-sm'
                 : 'text-nb-text-soft hover:text-nb-text'
             }`}
           >
-            {t.label}
+            {item.label}
           </button>
         ))}
       </div>
@@ -1097,6 +1188,7 @@ function MemoryTab() {
 // ── L1 Prompt Memory Panel ───────────────────────────────────────────────────
 
 function PromptMemoryPanel() {
+  const { t } = useTranslation()
   const [items, setItems] = useState<{ id: string; content: string; createdAt: number; tags?: string[] }[]>([])
   const [newText, setNewText] = useState('')
   const [loading, setLoading] = useState(true)
@@ -1124,7 +1216,7 @@ function PromptMemoryPanel() {
   }
 
   const handleClear = async () => {
-    if (!confirm('确认清空所有 Prompt 记忆？')) return
+    if (!confirm(t('settings.memory.clearAllConfirm'))) return
     await clearPromptMemory()
     setItems([])
   }
@@ -1133,7 +1225,7 @@ function PromptMemoryPanel() {
     <div className="space-y-4">
       <div className="flex items-start gap-2.5 p-3.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700/30 rounded-xl text-xs text-blue-700 dark:text-blue-300">
         <Brain size={14} className="shrink-0 mt-0.5" />
-        <span>Prompt 记忆会根据当前问题按需检索，只有最相关的记忆才会进入系统提示，避免污染上下文。</span>
+        <span>{t('settings.memory.promptHint')}</span>
       </div>
 
       <div className="flex gap-2">
@@ -1141,7 +1233,7 @@ function PromptMemoryPanel() {
           value={newText}
           onChange={e => setNewText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleAdd() }}
-          placeholder="输入要记住的事项，例如：我喜欢简洁的回答"
+          placeholder={t('settings.memoryPlaceholder')}
           className="flex-1 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft placeholder:text-nb-text-muted outline-none focus:border-brand-500"
         />
         <button
@@ -1158,7 +1250,7 @@ function PromptMemoryPanel() {
       ) : items.length === 0 ? (
         <div className="text-center py-8 text-nb-text-muted">
           <Brain size={32} className="mx-auto mb-2 opacity-30" />
-          <p className="text-sm">暂无记忆事项</p>
+          <p className="text-sm">{t('settings.memory.noMemory')}</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -1183,7 +1275,7 @@ function PromptMemoryPanel() {
             </div>
           ))}
           <button onClick={handleClear} className="w-full text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 py-1.5 transition-colors">
-            清空所有记忆
+            {t('settings.memory.clearAll')}
           </button>
         </div>
       )}
@@ -1194,6 +1286,7 @@ function PromptMemoryPanel() {
 // ── L2 Archive Panel ─────────────────────────────────────────────────────────
 
 function ArchivePanel() {
+  const { t } = useTranslation()
   const [sessions, setSessions] = useState<{ session_id: string; message_count: number; last_active: number }[]>([])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ session_id: string; role: string; content: string; created_at: number; score: number }[]>([])
@@ -1227,13 +1320,13 @@ function ArchivePanel() {
   }
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (!confirm(`确认删除会话 ${sessionId.slice(0, 8)}… 的所有归档记录？`)) return
+    if (!confirm(t('settings.memory.deleteArchiveConfirm', { id: `${sessionId.slice(0, 8)}…` }))) return
     await clearArchiveSession(sessionId)
     setSessions(prev => prev.filter(s => s.session_id !== sessionId))
   }
 
   const handleClearAll = async () => {
-    if (!confirm('确认清空所有历史归档？此操作不可恢复。')) return
+    if (!confirm(t('settings.memory.clearAllArchiveConfirm'))) return
     await clearAllArchive()
     setSessions([])
     setResults([])
@@ -1243,7 +1336,7 @@ function ArchivePanel() {
     <div className="space-y-4">
       <div className="flex items-start gap-2.5 p-3.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 rounded-xl text-xs text-amber-700 dark:text-amber-300">
         <Search size={14} className="shrink-0 mt-0.5" />
-        <span>历史归档自动保存所有对话记录，Agent 可通过 search_history 工具按需检索过往内容。</span>
+        <span>{t('settings.memory.archiveHint')}</span>
       </div>
 
       <div className="flex gap-2">
@@ -1251,12 +1344,14 @@ function ArchivePanel() {
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
-          placeholder="搜索历史记录…"
+          placeholder={t('settings.memory.searchPlaceholder')}
           className="flex-1 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft placeholder:text-nb-text-muted outline-none focus:border-brand-500"
         />
         <button
           onClick={handleSearch}
           disabled={!query.trim() || searching}
+          title={t('settings.memory.searchResults')}
+          aria-label={t('settings.memory.searchResults')}
           className="shrink-0 px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-sm text-white transition-colors"
         >
           {searching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
@@ -1265,12 +1360,12 @@ function ArchivePanel() {
 
       {results.length > 0 && (
         <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin pr-1">
-          <div className="text-xs text-nb-text-dim">搜索结果</div>
+          <div className="text-xs text-nb-text-dim">{t('settings.memory.searchResults')}</div>
           {results.map((r, idx) => (
             <div key={idx} className="p-2.5 bg-nb-card rounded-lg border border-nb-border-soft text-xs space-y-1">
               <div className="flex items-center gap-2 text-nb-text-dim">
                 <span className="px-1.5 py-0.5 bg-nb-raised rounded text-[10px]">{r.role}</span>
-                <span>{formatTime(r.created_at)}</span>
+                <span>{formatDateTime(r.created_at * 1000)}</span>
                 <span className="text-[10px] opacity-60">score: {Number(r.score).toFixed(3)}</span>
               </div>
               <p className="text-nb-text-soft line-clamp-3">{r.content}</p>
@@ -1281,17 +1376,17 @@ function ArchivePanel() {
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <div className="text-xs text-nb-text-dim">会话列表</div>
+          <div className="text-xs text-nb-text-dim">{t('settings.memory.sessionList')}</div>
           {sessions.length > 0 && (
             <button onClick={handleClearAll} className="text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition-colors">
-              清空全部
+              {t('settings.memory.clearAllArchive')}
             </button>
           )}
         </div>
         {loading ? (
           <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-nb-text-muted" /></div>
         ) : sessions.length === 0 ? (
-          <div className="text-center py-6 text-nb-text-muted text-sm">暂无归档会话</div>
+          <div className="text-center py-6 text-nb-text-muted text-sm">{t('settings.memory.noArchiveSessions')}</div>
         ) : (
           <div className="space-y-2 max-h-56 overflow-y-auto scrollbar-thin pr-1">
             {sessions.map(s => (
@@ -1299,11 +1394,16 @@ function ArchivePanel() {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-nb-text-soft truncate">{s.session_id}</div>
                   <div className="text-xs text-nb-text-dim mt-0.5">
-                    {s.message_count} 条消息 · 最后活跃 {formatTime(s.last_active)}
+                    {t('settings.memory.messagesCount', {
+                      count: s.message_count,
+                      time: formatDateTime(s.last_active * 1000),
+                    })}
                   </div>
                 </div>
                 <button
                   onClick={() => handleDeleteSession(s.session_id)}
+                  title={t('settings.memory.deleteArchiveConfirm', { id: `${s.session_id.slice(0, 8)}…` })}
+                  aria-label={t('settings.memory.deleteArchiveConfirm', { id: `${s.session_id.slice(0, 8)}…` })}
                   className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-red-600 dark:hover:text-red-400 transition-colors"
                 >
                   <Trash2 size={13} />
@@ -1320,6 +1420,7 @@ function ArchivePanel() {
 // ── L3 Skill Memory Panel ────────────────────────────────────────────────────
 
 function SkillMemoryPanel() {
+  const { t } = useTranslation()
   const [skills, setSkills] = useState<{ name: string; filename: string; title: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<{ name: string; content: string } | null>(null)
@@ -1340,7 +1441,7 @@ function SkillMemoryPanel() {
   useEffect(() => { load() }, [load])
 
   const handleDelete = async (name: string) => {
-    if (!confirm(`确认删除技能文档「${name}」？`)) return
+    if (!confirm(t('settings.memory.deleteSkillConfirm', { name }))) return
     await deleteSkillMemory(name)
     setSkills(prev => prev.filter(s => s.name !== name))
     if (editing?.name === name) setEditing(null)
@@ -1357,7 +1458,7 @@ function SkillMemoryPanel() {
   }
 
   const startNew = () => {
-    setEditing({ name: '', content: '# 新技能\n\n在此处描述该技能的使用场景和步骤。\n' })
+    setEditing({ name: '', content: t('settings.memory.newSkillTemplate') })
   }
 
   const startEdit = async (name: string) => {
@@ -1372,21 +1473,21 @@ function SkillMemoryPanel() {
           <input
             value={editing.name}
             onChange={e => setEditing({ ...editing, name: e.target.value })}
-            placeholder="技能名称"
+            placeholder={t('settings.memory.skillNamePlaceholder')}
             className="flex-1 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft placeholder:text-nb-text-muted outline-none focus:border-brand-500"
           />
           <button
             onClick={() => setEditing(null)}
             className="px-3 py-2 rounded-lg border border-nb-border text-sm text-nb-text-soft hover:bg-nb-raised transition-colors"
           >
-            取消
+            {t('settings.memory.cancel')}
           </button>
           <button
             onClick={handleSave}
             disabled={!editing.name.trim()}
             className="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-sm text-white transition-colors"
           >
-            保存
+            {t('settings.memory.save')}
           </button>
         </div>
         <textarea
@@ -1402,17 +1503,17 @@ function SkillMemoryPanel() {
     <div className="space-y-4">
       <div className="flex items-start gap-2.5 p-3.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700/30 rounded-xl text-xs text-emerald-700 dark:text-emerald-300">
         <BookOpen size={14} className="shrink-0 mt-0.5" />
-        <span>技能文档存放于 ~/.nanobot/skills/，Agent 会根据问题自动加载最相关的技能作为参考。</span>
+        <span>{t('settings.memory.skillsHint')}</span>
       </div>
 
       <div className="flex items-center justify-between">
-        <div className="text-xs text-nb-text-dim">{skills.length} 个技能</div>
+        <div className="text-xs text-nb-text-dim">{t('settings.memory.skillCount', { count: skills.length })}</div>
         <button
           onClick={startNew}
           className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-brand-600 hover:bg-brand-500 text-xs text-white transition-colors"
         >
           <Plus size={13} />
-          新建技能
+          {t('settings.memory.newSkill')}
         </button>
       </div>
 
@@ -1421,7 +1522,7 @@ function SkillMemoryPanel() {
       ) : skills.length === 0 ? (
         <div className="text-center py-8 text-nb-text-muted">
           <BookOpen size={32} className="mx-auto mb-2 opacity-30" />
-          <p className="text-sm">暂无技能文档</p>
+          <p className="text-sm">{t('settings.memory.noSkillDocs')}</p>
         </div>
       ) : (
         <div className="space-y-2 max-h-80 overflow-y-auto scrollbar-thin pr-1">
@@ -1454,11 +1555,11 @@ function SkillMemoryPanel() {
 // ── Categories Tab ────────────────────────────────────────────────────────────
 
 function CategoriesTab() {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const [categories, setCategories] = useState<CategoryInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [newName, setNewName] = useState('')
-  const [newIcon, setNewIcon] = useState('📌')
+  const [newIcon, setNewIcon] = useState(DEFAULT_ICON_NAME)
 
   useEffect(() => {
     loadCategories()
@@ -1481,7 +1582,7 @@ function CategoriesTab() {
       const newCat = await addCategory(newName.trim(), newIcon)
       setCategories(prev => [...prev, newCat])
       setNewName('')
-      setNewIcon('📌')
+      setNewIcon(DEFAULT_ICON_NAME)
     } catch (e) {
       console.error('Failed to add category:', e)
     }
@@ -1511,12 +1612,20 @@ function CategoriesTab() {
 
       {/* Add new category */}
       <div className="flex gap-2">
-        <input
-          value={newIcon}
-          onChange={e => setNewIcon(e.target.value)}
-          placeholder="图标"
-          className="w-16 bg-nb-card border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text-soft text-center outline-none focus:border-brand-500"
-        />
+        <div className="flex items-center gap-1.5 px-2 bg-nb-card border border-nb-border rounded-lg shrink-0">
+          <ItemIcon name={newIcon} size={15} className="text-brand-400" />
+          <select
+            value={newIcon}
+            onChange={e => setNewIcon(e.target.value)}
+            title={t('settings.categories.iconPlaceholder')}
+            aria-label={t('settings.categories.iconPlaceholder')}
+            className="w-24 bg-transparent text-nb-text-soft text-sm outline-none focus:border-brand-500"
+          >
+            {ICON_NAMES.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </div>
         <input
           value={newName}
           onChange={e => setNewName(e.target.value)}
@@ -1543,8 +1652,8 @@ function CategoriesTab() {
             <div className="grid grid-cols-2 gap-2">
               {presetCategories.map(cat => (
                 <div key={cat.id} className="flex items-center gap-2 p-2.5 bg-nb-card rounded-lg">
-                  <span className="text-lg">{cat.icon}</span>
-                  <span className="text-sm text-nb-text-soft">{i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)}</span>
+                  <ItemIcon name={categoryIconName(cat)} size={18} className="text-brand-400 shrink-0" />
+                  <span className="text-sm text-nb-text-soft truncate">{categoryDisplayName(cat)}</span>
                 </div>
               ))}
             </div>
@@ -1557,10 +1666,12 @@ function CategoriesTab() {
               <div className="space-y-2">
                 {customCategories.map(cat => (
                   <div key={cat.id} className="flex items-center gap-2 p-3 bg-nb-card rounded-lg group">
-                    <span className="text-lg">{cat.icon}</span>
-                    <span className="flex-1 text-sm text-nb-text-soft">{i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)}</span>
+                    <ItemIcon name={categoryIconName(cat)} size={18} className="text-brand-400 shrink-0" />
+                    <span className="flex-1 text-sm text-nb-text-soft truncate">{categoryDisplayName(cat)}</span>
                     <button
                       onClick={() => handleDelete(cat.id)}
+                      title={t('settings.delete')}
+                      aria-label={t('settings.delete')}
                       className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-nb-raised text-nb-text-dim hover:text-red-600 dark:hover:text-red-400 transition-colors"
                     >
                       <Trash2 size={13} />
@@ -1715,12 +1826,12 @@ function CookiesTab() {
             value={domainFilter}
             onChange={e => setDomainFilter(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleFilter()}
-            placeholder={t('settings.cookieDomainPlaceholder') || '按域名过滤（可选）'}
+            placeholder={t('settings.cookieDomainPlaceholder')}
             className="flex-1 bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50"
           />
         </div>
         <button onClick={handleFilter} className="px-3 py-2 bg-brand-500/10 hover:bg-brand-500/20 text-brand-500 rounded-lg text-sm font-medium transition-all">
-          {t('settings.filter') || '过滤'}
+          {t('settings.filter')}
         </button>
         <button
           onClick={handleClearAll}
@@ -1728,7 +1839,7 @@ function CookiesTab() {
           className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
         >
           {clearing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-          {t('settings.clearAll') || '清空全部'}
+          {t('settings.clearAll')}
         </button>
       </div>
 
@@ -1737,10 +1848,10 @@ function CookiesTab() {
         <table className="w-full text-sm">
           <thead className="bg-nb-card/60 border-b border-nb-border">
             <tr>
-              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider">{t('settings.cookieName') || '名称'}</th>
-              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider hidden md:table-cell">{t('settings.cookieDomain') || '域名'}</th>
-              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider hidden lg:table-cell">{t('settings.cookiePath') || '路径'}</th>
-              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider">{t('settings.cookieSecure') || '安全'}</th>
+              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider">{t('settings.cookieName')}</th>
+              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider hidden md:table-cell">{t('settings.cookieDomain')}</th>
+              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider hidden lg:table-cell">{t('settings.cookiePath')}</th>
+              <th className="text-left px-4 py-2.5 text-nb-text-dim font-medium text-xs uppercase tracking-wider">{t('settings.cookieSecure')}</th>
               <th className="w-10"></th>
             </tr>
           </thead>
@@ -1754,7 +1865,7 @@ function CookiesTab() {
             ) : filteredCookies.length === 0 ? (
               <tr>
                 <td colSpan={5} className="text-center py-10 text-nb-text-dim text-sm">
-                  {domainFilter ? (t('settings.noCookiesFiltered') || '没有匹配的 Cookie') : (t('settings.noCookies') || '暂无 Cookie')}
+                  {domainFilter ? (t('settings.noCookiesFiltered')) : (t('settings.noCookies'))}
                 </td>
               </tr>
             ) : filteredCookies.map((c) => (
@@ -1773,7 +1884,7 @@ function CookiesTab() {
                   <button
                     onClick={() => handleDelete(`https://${c.domain}${c.path}`, c.name)}
                     className="p-1.5 rounded-lg hover:bg-red-500/15 text-red-400/60 hover:text-red-400 transition-all"
-                    title={t('settings.delete') || '删除'}
+                    title={t('settings.delete')}
                   >
                     <Trash2 size={13} />
                   </button>
@@ -1788,34 +1899,34 @@ function CookiesTab() {
       <details className="group">
         <summary className="flex items-center gap-2 cursor-pointer text-sm font-medium text-nb-text-dim hover:text-nb-text-soft transition-colors list-none">
           <Plus size={14} />
-          {t('settings.addCookie') || '添加 Cookie'}
+          {t('settings.addCookie')}
           <span className="ml-auto group-open:rotate-45 transition-transform duration-200">
             <Plus size={14} />
           </span>
         </summary>
         <form onSubmit={handleAdd} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="md:col-span-2">
-            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieUrl') || 'URL'} *</label>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieUrl')} *</label>
             <input value={addUrl} onChange={e => setAddUrl(e.target.value)} required placeholder="https://example.com"
               className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
           </div>
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieName') || '名称'} *</label>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieName')} *</label>
             <input value={addName} onChange={e => setAddName(e.target.value)} required placeholder="session_id"
               className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
           </div>
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieValue') || '值'} *</label>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieValue')} *</label>
             <input value={addValue} onChange={e => setAddValue(e.target.value)} required placeholder="abc123"
               className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
           </div>
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieDomain') || '域名'}</label>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookieDomain')}</label>
             <input value={addDomain} onChange={e => setAddDomain(e.target.value)} placeholder="example.com"
               className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
           </div>
           <div>
-            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookiePath') || '路径'}</label>
+            <label className="block text-xs text-nb-text-dim mb-1">{t('settings.cookiePath')}</label>
             <input value={addPath} onChange={e => setAddPath(e.target.value)} placeholder="/"
               className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text placeholder:text-nb-text-muted focus:outline-none focus:border-brand-500/50" />
           </div>
@@ -1823,7 +1934,7 @@ function CookiesTab() {
             <label className="flex items-center gap-2 cursor-pointer text-sm text-nb-text-dim">
               <input type="checkbox" checked={addSecure} onChange={e => setAddSecure(e.target.checked)}
                 className="text-nb-text-soft w-4 h-4 rounded border-nb-border bg-nb-input accent-brand-500" />
-              {t('settings.cookieSecure') || 'Secure'}
+              {t('settings.cookieSecure')}
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm text-nb-text-dim">
               <input type="checkbox" checked={addHttpOnly} onChange={e => setAddHttpOnly(e.target.checked)}
@@ -1847,7 +1958,7 @@ function CookiesTab() {
               className="w-full px-4 py-2.5 bg-brand-500 hover:bg-brand-400 text-white rounded-xl text-sm font-medium transition-all disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-              {t('settings.add') || '添加'}
+              {t('settings.add')}
             </button>
           </div>
         </form>
@@ -1857,7 +1968,7 @@ function CookiesTab() {
 }
 
 function AppearanceTab() {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const eAPI = (window as any).electronAPI
   const [fxOn,  setFxOn]  = useState(true)
   const [adOn,  setAdOn]  = useState(true)
@@ -1912,7 +2023,7 @@ function AppearanceTab() {
 
   return (
     <div className="space-y-1">
-      <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-4">外观与行为</h3>
+      <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-4">{t('settings.appearanceBehavior')}</h3>
 
       {/* Language */}
       <div className="flex items-start gap-4 py-4 border-b border-nb-border-soft">
@@ -1920,31 +2031,10 @@ function AppearanceTab() {
           <Globe size={18} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-nb-text">语言 / Language</p>
-          <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">Switch interface language.</p>
+          <p className="text-sm font-semibold text-nb-text">{t('settings.language')}</p>
+          <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">{t('settings.languageDesc')}</p>
         </div>
-        <div className="flex items-center gap-1.5 mt-0.5 bg-nb-raised rounded-xl p-1 shrink-0">
-          <button
-            onClick={() => i18n.changeLanguage('zh-CN')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              i18n.language.startsWith('zh')
-                ? 'bg-nb-card text-nb-text shadow-sm'
-                : 'text-nb-text-dim hover:text-nb-text'
-            }`}
-          >
-            中文
-          </button>
-          <button
-            onClick={() => i18n.changeLanguage('en')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              i18n.language.startsWith('en')
-                ? 'bg-nb-card text-nb-text shadow-sm'
-                : 'text-nb-text-dim hover:text-nb-text'
-            }`}
-          >
-            English
-          </button>
-        </div>
+        <LanguagePicker className="mt-0.5" />
       </div>
 
       {/* Theme mode */}
@@ -1999,7 +2089,7 @@ function AppearanceTab() {
       />
 
       <ToggleRow
-        icon={<span className="text-base">🚫</span>}
+        icon={<ShieldOff size={18} />}
         title={t('settings.adBlock')}
         desc={t('settings.adBlockDesc')}
         checked={adOn}
@@ -2013,32 +2103,32 @@ function AppearanceTab() {
             <Terminal size={18} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-nb-text">Agent 限制</p>
-            <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">设置 AI 输出限制，0 表示无限制</p>
+            <p className="text-sm font-semibold text-nb-text">{t('settings.agentLimits')}</p>
+            <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">{t('settings.agentLimitsDesc')}</p>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-nb-text-dim mb-1">最大 Token 数</label>
+                <label className="block text-xs text-nb-text-dim mb-1">{t('settings.maxTokens')}</label>
                 <input
                   type="number"
                   min={0}
                   value={maxTokens}
                   onChange={(e) => handleLimitsChange(parseInt(e.target.value) || 0, maxIterations)}
                   className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text focus:outline-none focus:border-brand-500/50"
-                  placeholder="0 = 无限制"
+                  placeholder={`0 = ${t('common.unlimited')}`}
                 />
-                <p className="text-[10px] text-nb-text-muted mt-1">单次响应最大 token 数</p>
+                <p className="text-[10px] text-nb-text-muted mt-1">{t('settings.maxTokensHint')}</p>
               </div>
               <div>
-                <label className="block text-xs text-nb-text-dim mb-1">最大迭代次数</label>
+                <label className="block text-xs text-nb-text-dim mb-1">{t('settings.maxIterations')}</label>
                 <input
                   type="number"
                   min={0}
                   value={maxIterations}
                   onChange={(e) => handleLimitsChange(maxTokens, parseInt(e.target.value) || 0)}
                   className="w-full bg-nb-input border border-nb-border rounded-lg px-3 py-2 text-sm text-nb-text focus:outline-none focus:border-brand-500/50"
-                  placeholder="0 = 无限制"
+                  placeholder={`0 = ${t('common.unlimited')}`}
                 />
-                <p className="text-[10px] text-nb-text-muted mt-1">工具调用最大循环次数</p>
+                <p className="text-[10px] text-nb-text-muted mt-1">{t('settings.maxIterationsHint')}</p>
               </div>
             </div>
           </div>
@@ -2052,8 +2142,8 @@ function AppearanceTab() {
             <Search size={18} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-nb-text">默认搜索引擎</p>
-            <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">设置地址栏和空白页的默认搜索引擎</p>
+            <p className="text-sm font-semibold text-nb-text">{t('settings.searchEngine')}</p>
+            <p className="text-xs text-nb-text-muted mt-0.5 leading-relaxed">{t('settings.searchEngineDesc')}</p>
             <div className="mt-3">
               <select
                 value={searchEngine}
@@ -2062,7 +2152,7 @@ function AppearanceTab() {
               >
                 <option value="bing">Bing</option>
                 <option value="google">Google</option>
-                <option value="baidu">百度</option>
+                <option value="baidu">Baidu</option>
                 <option value="duckduckgo">DuckDuckGo</option>
               </select>
             </div>
@@ -2073,7 +2163,7 @@ function AppearanceTab() {
       {/* Preview */}
       <div className="mt-6 rounded-xl border border-nb-border bg-nb-card/40 p-5">
         <p className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-3 flex items-center gap-1.5">
-          <Sparkles size={12} /> 动效预览
+          <Sparkles size={12} /> {t('settings.fxPreview')}
         </p>
         <div className="flex items-center gap-3 text-sm text-nb-text-dim">
           <MousePointer2 size={20} className={fxOn ? 'text-brand-400' : 'text-nb-text-muted'} />

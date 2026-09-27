@@ -16,28 +16,81 @@
     "save": "保存",
     "cancel": "取消",
     "delete": "删除",
-    "restore": "恢复"
+    "restore": "恢复",
+    "confirm": "确认",
+    "optional": "可选",
+    "unlimited": "无限制",
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "back": "后退",
+    "forward": "前进",
+    "reload": "刷新",
+    "stop": "停止",
+    "copy": "复制",
+    "copied": "已复制",
+    "refresh": "刷新",
+    "icon": "图标",
+    "name": "名称",
+    "search": "搜索"
+  },
+  "lang": {
+    "label": "语言",
+    "en": "英语",
+    "fa": "波斯语",
+    "zhCN": "简体中文",
+    "enSample": "Settings",
+    "faSample": "تنظیمات",
+    "zhCNSample": "设置"
+  },
+  "welcome": {
+    "title": "欢迎使用 UrchinAI",
+    "subtitle": "请先选择界面语言，之后可随时在设置中更改。",
+    "selectLanguage": "选择语言",
+    "start": "开始使用",
+    "changeLater": "可以稍后在「设置 → 外观与动效」中修改。"
   },
   "tabBar": {
     "dragHint": "拖动排序 / 拖出窗口创建独立窗口"
+  },
+  "window": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "close": "关闭"
+  },
+  "nav": {
+    "siteInfo": "站点信息",
+    "sessions": "会话",
+    "history": "浏览历史",
+    "bookmarks": "书签",
+    "findPlaceholder": "在页面中查找...",
+    "findPrevious": "上一个",
+    "findNext": "下一个"
   },
   "history": {
     "title": "浏览历史",
     "searchPlaceholder": "搜索历史...",
     "empty": "暂无历史记录",
-    "clearAll": "清空历史"
+    "clearAll": "清空历史",
+    "clearConfirm": "确定清空全部浏览历史？此操作不可恢复。"
   },
   "bookmarks": {
     "title": "书签",
     "empty": "暂无书签",
-    "changeCategory": "切换分类"
+    "changeCategory": "切换分类",
+    "all": "全部",
+    "remove": "取消书签"
   },
   "sessions": {
     "title": "会话管理",
     "namePlaceholder": "会话名称...",
     "empty": "暂无保存的会话",
     "tabsCount": "{{count}} 个标签",
-    "newSession": "新建会话"
+    "newSession": "新建会话",
+    "saveCurrent": "保存当前会话",
+    "defaultName": "新对话",
+    "newChatIndex": "对话 {{index}}",
+    "deleteConfirm": "确定删除会话「{{name}}」？",
+    "defaultNameSuffix": "对话 {{index}}"
   },
   "chat": {
     "title": "Urchin AI 对话",
@@ -52,29 +105,192 @@
     "noModelsConfigured": "当前服务商暂无预设模型",
     "noModelsForProvider": "该服务商暂无预设模型",
     "configureModels": "去设置服务商...",
+    "send": "发送",
+    "stopGenerating": "停止生成",
+    "uploadFile": "上传文件",
+    "dropToUpload": "松开以上传文件",
+    "filesUploaded": "[上传了 {{count}} 个文件]",
+    "selectedElement": "[选中元素 #{{index}}]: {{selector}}",
+    "elementToolHint": "\n\n使用 `browser_get_text` 工具并传入上述 @N 格式选择器来获取元素内容。例如：browser_get_text(selector=\"@123456\")",
+    "unknownError": "未知错误",
+    "errorPrefix": "错误：",
+    "copy": "复制",
+    "copied": "已复制",
+    "pickElement": "选取网页元素",
+    "cancelPick": "点击取消选取",
+    "pickFailed": "无法启动元素选择器，请确保已打开网页",
+    "editScripts": "编辑快捷指令",
+    "sessionFallback": "对话",
+    "sessionList": "会话列表",
+    "newSession": "新建会话",
+    "thinking": "思考中...",
+    "thoughtFor": "思考了 {{count}} 秒",
+    "thoughtForFew": "思考了几秒钟",
+    "toolArgs": "参数",
+    "toolResult": "结果",
     "status": {
       "connecting": "连接中",
       "connected": "已连接",
       "disconnected": "已断开",
       "error": "连接错误"
-    },
-    "toolArgs": "参数",
-    "toolResult": "结果"
+    }
+  },
+  "scripts": {
+    "title": "编辑快捷指令",
+    "add": "添加快捷指令",
+    "deleteConfirm": "确定删除这个快捷指令吗？",
+    "namePlaceholder": "名称",
+    "promptPlaceholder": "提示词内容...",
+    "saving": "保存中...",
+    "default": {
+      "summarize": {
+        "name": "总结页面",
+        "prompt": "请总结当前浏览器页面的主要内容（使用 browser_get_page_content 工具）"
+      },
+      "screenshot": {
+        "name": "截图分析",
+        "prompt": "请截取当前页面截图并描述你看到的内容"
+      },
+      "links": {
+        "name": "提取链接",
+        "prompt": "请列出当前页面上所有重要链接"
+      },
+      "translate": {
+        "name": "翻译页面",
+        "prompt": "请将当前页面的主要内容翻译成{{language}}（使用 browser_get_page_content 工具读取）"
+      },
+      "form": {
+        "name": "填写表单",
+        "prompt": "请帮我查看当前页面有哪些表单字段，并提示我如何填写"
+      },
+      "allTabs": {
+        "name": "分析所有标签页",
+        "prompt": "请分析我当前打开的所有标签页，帮我总结关键信息、比较不同来源的观点，并给出综合见解"
+      }
+    }
+  },
+  "tools": {
+    "calledCount": "已调用 {{count}} 个工具",
+    "andMore": "等",
+    "running": "{{count}} 运行中",
+    "failed": "{{count}} 失败",
+    "done": "{{count}} 完成"
   },
   "newTab": {
     "searchPlaceholder": "搜索或输入网址...",
     "quickAccess": "快速访问",
     "recent": "最近访问",
     "defaultLinks": "常用网站",
-    "addBookmarkHint": "点击地址栏右侧的书签图标可以添加书签，书签会显示在这里。"
+    "addBookmarkHint": "点击地址栏右侧的书签图标可以添加书签，书签会显示在这里。",
+    "chatHistory": "对话历史",
+    "newSession": "新建会话",
+    "deleteSessionConfirm": "确定删除会话「{{name}}」？",
+    "hideQuickAccess": "隐藏快速访问",
+    "showQuickAccess": "显示快速访问",
+    "hideSidebar": "隐藏侧边栏",
+    "showSidebar": "显示侧边栏",
+    "chatFallback": "对话"
+  },
+  "siteInfo": {
+    "unknownSite": "未知站点",
+    "secure": "连接安全",
+    "insecure": "连接不安全",
+    "noPage": "未加载页面",
+    "cookieCount": "Cookie（{{count}}）",
+    "refresh": "刷新",
+    "noCookies": "暂无 Cookie",
+    "deleteCookie": "删除 Cookie",
+    "clearSiteData": "清除站点数据",
+    "clearConfirm": "确认清除"
   },
   "settings": {
     "title": "系统设置",
     "model": "模型与服务商",
-    "skills": "技能管理",
-    "mcp": "MCP 服务器",
-    "memory": "AI 记忆",
-    "categories": "书签分类",
+    "skills": {
+      "installed": "已安装的技能",
+      "noSkills": "暂未安装任何技能",
+      "hubTitle": "Skills Hub",
+      "anthropicTitle": "Anthropic Skills",
+      "hubDesc": "官方 Skills 仓库 · 点击加载",
+      "collapse": "收起",
+      "searchPlaceholder": "搜索技能名称...",
+      "search": "搜索",
+      "clear": "清除",
+      "noMatches": "未找到匹配的技能",
+      "noAvailable": "暂无可用技能",
+      "viewSource": "查看源文件",
+      "installedBadge": "已安装",
+      "install": "安装",
+      "localInstall": "本地安装",
+      "localInstallDesc": "选择本地的 skill.md 文件进行安装",
+      "chooseFile": "选择文件",
+      "installFromUrl": "从链接安装技能",
+      "skillUrl": "技能链接（skill.md）",
+      "dirName": "目录名",
+      "installSkill": "安装技能",
+      "searchFailed": "搜索失败：{{error}}",
+      "loadFailed": "加载 Anthropic Skills 失败：{{error}}",
+      "localInstallFailed": "本地安装失败：{{error}}"
+    },
+    "mcp": {
+      "title": "MCP 服务器",
+      "add": "添加",
+      "empty": "暂未配置 MCP 服务器",
+      "deleteConfirm": "确认删除「{{name}}」？",
+      "newTitle": "新建 MCP 服务器",
+      "editTitle": "编辑「{{name}}」",
+      "name": "名称",
+      "type": "类型",
+      "typeStdio": "stdio（本地进程）",
+      "typeHttp": "http（远程端点）",
+      "command": "命令",
+      "args": "参数（JSON 数组或逗号分隔）",
+      "url": "URL",
+      "headers": "请求头（JSON）",
+      "timeout": "超时时间（秒）",
+      "update": "更新",
+      "cancel": "取消",
+      "templates": "快速模板",
+      "addedBadge": "已添加",
+      "addShort": "添加",
+      "errName": "名称不能为空",
+      "errCommand": "命令不能为空",
+      "errUrl": "URL 不能为空",
+      "templateDesc": {
+        "filesystem": "本地文件系统访问",
+        "brave-search": "Brave 网页搜索"
+      }
+    },
+    "memory": {
+      "prompt": "Prompt 记忆",
+      "archive": "历史归档",
+      "skills": "技能文档",
+      "promptHint": "Prompt 记忆会根据当前问题按需检索，只有最相关的记忆才会进入系统提示，避免污染上下文。",
+      "archiveHint": "历史归档自动保存所有对话记录，Agent 可通过 search_history 工具按需检索过往内容。",
+      "skillsHint": "技能文档存放于 ~/.nanobot/skills/，Agent 会根据问题自动加载最相关的技能作为参考。",
+      "noMemory": "暂无记忆事项",
+      "clearAllConfirm": "确认清空所有 Prompt 记忆？",
+      "clearAll": "清空所有记忆",
+      "noArchiveSessions": "暂无归档会话",
+      "searchPlaceholder": "搜索历史记录…",
+      "searchResults": "搜索结果",
+      "sessionList": "会话列表",
+      "clearAllArchiveConfirm": "确认清空所有历史归档？此操作不可恢复。",
+      "clearAllArchive": "清空全部",
+      "messagesCount": "{{count}} 条消息 · 最后活跃 {{time}}",
+      "deleteArchiveConfirm": "确认删除会话 {{id}}… 的所有归档记录？",
+      "noSkillDocs": "暂无技能文档",
+      "skillCount": "{{count}} 个技能",
+      "newSkill": "新建技能",
+      "skillNamePlaceholder": "技能名称",
+      "deleteSkillConfirm": "确认删除技能文档「{{name}}」？",
+      "cancel": "取消",
+      "save": "保存",
+      "newSkillTemplate": "# 新技能\n\n在此处描述该技能的使用场景和步骤。\n"
+    },
+    "categories": {
+      "iconPlaceholder": "图标"
+    },
     "appearance": "外观与动效",
     "currentModel": "当前使用的模型",
     "provider": "服务商",
@@ -114,13 +330,17 @@
     "night": "夜晚",
     "fxTitle": "AI 虚拟鼠标",
     "fxDesc": "智能体操作浏览器时显示虚拟光标、点击涟漪、元素高亮和操作提示，直观展示 AI 的操作过程。",
-    "fxOn": "✓ 虚拟鼠标已开启",
+    "fxOn": "虚拟鼠标已开启",
     "fxOff": "虚拟鼠标已关闭",
     "fxHint": "AI 操作时会显示蓝色箭头光标 + 点击涟漪效果",
     "fxHintOff": "操作动效不会显示在浏览器中",
     "adBlock": "广告拦截",
     "adBlockDesc": "自动屏蔽常见广告域名，提升浏览体验（需重新加载页面生效）。",
-    "cookies": "Cookie 管理",
+    "cookies": {
+      "secureYes": "是",
+      "httpOnly": "HttpOnly",
+      "sameSite": "SameSite"
+    },
     "cookieDomainPlaceholder": "按域名过滤（可选）",
     "filter": "过滤",
     "clearAll": "清空全部",
@@ -133,9 +353,94 @@
     "addCookie": "添加 Cookie",
     "cookieUrl": "URL",
     "cookieValue": "值",
-    "delete": "删除"
+    "delete": "删除",
+    "language": "界面语言",
+    "languageDesc": "切换界面语言，选择从右到左的语言时布局会自动镜像。",
+    "appearanceBehavior": "外观与行为",
+    "agentLimits": "Agent 限制",
+    "agentLimitsDesc": "设置 AI 输出限制，0 表示无限制。",
+    "maxTokens": "最大 Token 数",
+    "maxTokensHint": "单次响应最大 token 数",
+    "maxIterations": "最大迭代次数",
+    "maxIterationsHint": "工具调用最大循环次数",
+    "searchEngine": "默认搜索引擎",
+    "searchEngineDesc": "用于地址栏搜索和空白页搜索",
+    "fxPreview": "动效预览",
+    "modelSection": {
+      "currentModel": "当前使用的模型",
+      "configureFirst": "请先在下方配置服务商和模型",
+      "selectModel": "请选择模型…",
+      "saveCurrentModel": "保存当前模型",
+      "saved": "已保存！",
+      "translation": "翻译设置",
+      "translationDesc": "配置划词翻译使用的模型和目标语言。",
+      "translationModel": "翻译模型",
+      "targetLang": "目标语言",
+      "defaultModel": "使用默认模型",
+      "saveTranslation": "保存翻译设置",
+      "savedTranslation": "已保存！",
+      "providers": "API 服务商配置",
+      "providersDesc": "配置服务商的 API Key 和可用模型列表。每个服务商可以添加多个模型。",
+      "selectProvider": "选择要添加的服务商…",
+      "customName": "自定义名称",
+      "add": "添加",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "sk-… 或 Bearer token",
+      "showKey": "显示 API Key",
+      "hideKey": "隐藏 API Key",
+      "apiBase": "API Base URL",
+      "apiBasePlaceholder": "例如 http://192.168.x.x:11434 或 …:1234/v1",
+      "apiBaseHint": "须指向提供 OpenAI 兼容接口的服务；程序会请求「Base + /v1/chat/completions」。Ollama 多为端口 11434；LM Studio 常为 /v1；若出现 404，请核对端口是否真是推理服务而非其它网站。",
+      "availableModels": "可用模型",
+      "displayName": "显示名",
+      "modelId": "模型 ID",
+      "suggestedModels": "推荐模型（点击添加）：",
+      "saveApi": "保存 API 配置",
+      "savedApi": "已保存",
+      "deleteProviderConfirm": "确认删除服务商「{{name}}」？",
+      "apiKeyHint": "只需填写 API Key — 保存后会自动获取该服务商提供的全部模型。",
+      "fetchModels": "获取模型",
+      "fetchingModels": "获取中…",
+      "modelsFetched": "找到 {{count}} 个模型（免费 {{free}} 个）· 新增 {{added}} 个。",
+      "freeBadge": "免费",
+      "showAllModels": "显示全部 {{count}} 个",
+      "removeModel": "移除 {{name}}"
+    },
+    "providers": {
+      "custom": "自定义"
+    }
+  },
+  "categories": {
+    "work": "工作",
+    "study": "学习",
+    "entertainment": "娱乐",
+    "shopping": "购物",
+    "social": "社交",
+    "tools": "工具",
+    "news": "新闻",
+    "ai": "AI",
+    "finance": "金融",
+    "other": "其他",
+    "search": "搜索"
+  },
+  "targetLang": {
+    "zh": "中文",
+    "en": "English",
+    "ja": "日本語",
+    "ko": "한국어",
+    "fr": "Français",
+    "de": "Deutsch",
+    "es": "Español",
+    "ru": "Русский",
+    "fa": "فارسی",
+    "ar": "العربية",
+    "pt": "Português",
+    "it": "Italiano"
   },
   "readingMode": {
     "title": "阅读模式"
+  },
+  "markdown": {
+    "tableDetails": "表格详情"
   }
 }

@@ -20,6 +20,10 @@ import {
   listChatSessions, saveChatSessions, getSearchEngine, translate,
 } from './api/client'
 import { useWebSocket } from './hooks/useWebSocket'
+import ItemIcon from './lib/icons'
+import { categoryDisplayName, categoryIconName, fallbackCategorize } from './lib/categories'
+import { formatDate, formatDateTime, formatStamp } from './lib/format'
+import LanguageWelcome, { hasCompletedOnboarding } from './components/LanguageWelcome'
 
 // ── Electron IPC bridge ──────────────────────────────────────────────────────
 type ElectronAPI = {
@@ -196,21 +200,21 @@ function TabBar({
         <button
           onClick={() => (window as any).electronAPI?.windowMinimize()}
           className="w-10 h-8 flex items-center justify-center hover:bg-nb-card/80 rounded-lg transition-all duration-150 group"
-          title="最小化"
+          title={t('window.minimize')}
         >
           <Minus size={14} className="text-nb-text-dim group-hover:text-nb-text transition-colors" />
         </button>
         <button
           onClick={() => (window as any).electronAPI?.windowMaximize()}
           className="w-10 h-8 flex items-center justify-center hover:bg-nb-card/80 rounded-lg transition-all duration-150 group"
-          title="最大化"
+          title={t('window.maximize')}
         >
           <Maximize2 size={12} className="text-nb-text-dim group-hover:text-nb-text transition-colors" />
         </button>
         <button
           onClick={() => (window as any).electronAPI?.windowClose()}
           className="w-10 h-8 flex items-center justify-center hover:bg-red-500/90 rounded-lg transition-all duration-150 group"
-          title="关闭"
+          title={t('window.close')}
         >
           <X size={14} className="text-nb-text-dim group-hover:text-white transition-colors" />
         </button>
@@ -226,7 +230,7 @@ function HistoryPanel({ items, onNavigate, onClear, onClose, t }: {
 }) {
   const [search, setSearch] = useState('')
   const filtered = search ? items.filter(h => h.url.includes(search) || h.title.toLowerCase().includes(search.toLowerCase())) : items
-  const fmtTime = (ts:number) => new Date(ts*1000).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+  const fmtTime = (ts:number) => formatDateTime(new Date(ts*1000))
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -288,7 +292,7 @@ function HistoryPanel({ items, onNavigate, onClear, onClose, t }: {
 
 // ── BookmarksPanel ────────────────────────────────────────────────────────────
 
-interface CategoryInfo { id: string; name: string; name_en: string; icon: string }
+interface CategoryInfo { id: string; name: string; name_en?: string; name_fa?: string; icon: string }
 
 function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange, t, i18n }: {
   items: BookmarkItem[]
@@ -318,35 +322,20 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
   }, [onClose])
 
   // Fallback categorization for items without category
-  const fallbackCategorize = (url: string): string => {
-    try {
-      const host = new URL(url).hostname.toLowerCase()
-      const patterns: [string, RegExp][] = [
-        ["entertainment", /youtube|bilibili|netflix|iqiyi|youku|vimeo|twitch|douyin/],
-        ["social", /twitter|x\.com|facebook|instagram|weibo|linkedin|tiktok|discord/],
-        ["shopping", /amazon|taobao|jd\.com|tmall|pinduoduo|ebay|aliexpress|shopify/],
-        ["tools", /github|gitlab|stackoverflow|npmjs|pypi|vercel|railway|cloudflare|docker|google|baidu|bing/],
-        ["news", /news|bbc|cnn|xinhua|sina\.com|sohu|people\.com|reuters|theguardian/],
-        ["ai", /openai|chatgpt|claude|gemini|deepseek|huggingface|cohere|midjourney/],
-        ["finance", /bank|alipay|paypal|finance|trading|invest|stock|fund|crypto/],
-      ]
-      for (const [cat, pattern] of patterns) {
-        if (pattern.test(host)) return cat
-      }
-    } catch {}
-    return "other"
-  }
+  const categorize = (url: string): string => fallbackCategorize(url)
 
   // Get category display info
   const getCategoryInfo = (catId: string): CategoryInfo | undefined => categories.find(c => c.id === catId)
   const getCategoryName = (catId: string): string => {
     const cat = getCategoryInfo(catId)
-    return cat ? (i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)) : catId
+    if (cat) return categoryDisplayName(cat, i18n.language)
+    const fallback: CategoryInfo = { id: catId, name: catId, icon: 'other' }
+    return categoryDisplayName(fallback, i18n.language)
   }
 
   // Group items by category (using fallback for empty categories)
   const groupedItems = items.reduce<Record<string, BookmarkItem[]>>((acc, bm) => {
-    const cat = bm.category || fallbackCategorize(bm.url)
+    const cat = bm.category || categorize(bm.url)
     if (!acc[cat]) acc[cat] = []
     acc[cat].push(bm)
     return acc
@@ -378,7 +367,7 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
               filter === 'all' ? 'bg-gradient-to-r from-brand-600 to-brand-500 text-white shadow-sm shadow-brand-500/20' : 'bg-nb-card text-nb-text-dim hover:text-nb-text hover:bg-nb-card/80 border border-nb-border/50'
             }`}
           >
-            全部 ({items.length})
+            {t('bookmarks.all')} ({items.length})
           </button>
           {Object.entries(groupedItems).map(([catId, catItems]) => {
             const catInfo = getCategoryInfo(catId)
@@ -390,7 +379,8 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
                   filter === catId ? 'bg-gradient-to-r from-brand-600 to-brand-500 text-white shadow-sm shadow-brand-500/20' : 'bg-nb-card text-nb-text-dim hover:text-nb-text hover:bg-nb-card/80 border border-nb-border/50'
                 }`}
               >
-                {catInfo?.icon || '📌'} {getCategoryName(catId)} ({catItems.length})
+                <ItemIcon name={categoryIconName(catInfo)} size={12} className="inline-block align-[-2px] mr-1" />
+                {getCategoryName(catId)} ({catItems.length})
               </button>
             )
           })}
@@ -412,7 +402,7 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
             return (
               <div key={catId}>
                 <div className="px-4 py-2 bg-gradient-to-r from-nb-raised/50 to-transparent text-xs font-semibold text-nb-text-dim sticky top-0 backdrop-blur-sm border-b border-nb-border/30">
-                  <span className="mr-1.5">{catInfo?.icon || '📌'}</span>
+                  <ItemIcon name={categoryIconName(catInfo)} size={12} className="inline-block align-[-2px] mr-1.5" />
                   {getCategoryName(catId)}
                 </div>
                 {catItems.map((bm, i) => (
@@ -425,6 +415,7 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
                     onCategoryChange={onCategoryChange}
                     onClose={onClose}
                     i18n={i18n}
+                    t={t}
                   />
                 ))}
               </div>
@@ -442,6 +433,7 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
               onCategoryChange={onCategoryChange}
               onClose={onClose}
               i18n={i18n}
+              t={t}
             />
           ))
         )}
@@ -450,7 +442,7 @@ function BookmarksPanel({ items, onNavigate, onRemove, onClose, onCategoryChange
   )
 }
 
-function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChange, onClose, i18n }: {
+function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChange, onClose, i18n, t }: {
   bm: BookmarkItem
   categories: CategoryInfo[]
   onNavigate: (u: string) => void
@@ -458,6 +450,7 @@ function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChang
   onCategoryChange: (url: string, category: string) => void
   onClose: () => void
   i18n: { language: string }
+  t: (key: string) => string
 }) {
   const [showCatSelect, setShowCatSelect] = useState(false)
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 })
@@ -503,9 +496,9 @@ function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChang
           ref={catBtnRef}
           onClick={() => showCatSelect ? setShowCatSelect(false) : openDropdown()}
           className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] bg-nb-card/80 border border-nb-border/50 text-nb-text-dim hover:text-nb-text hover:bg-nb-card hover:border-brand-500/30 transition-all duration-150"
-          title="Change category"
+          title={t('bookmarks.changeCategory')}
         >
-          {categories.find(c => c.id === bm.category)?.icon || '📌'}
+          <ItemIcon name={categoryIconName(categories.find(c => c.id === bm.category))} size={12} />
         </button>
         {showCatSelect && createPortal(
           <div
@@ -520,8 +513,8 @@ function BookmarkItemRow({ bm, categories, onNavigate, onRemove, onCategoryChang
                   bm.category === cat.id ? 'text-brand-500 font-medium bg-brand-500/10' : 'text-nb-text-soft'
                 }`}
               >
-                <span>{cat.icon}</span>
-                <span>{i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)}</span>
+                <ItemIcon name={categoryIconName(cat)} size={12} className="text-nb-text-dim shrink-0" />
+                <span>{categoryDisplayName(cat, i18n.language)}</span>
               </button>
             ))}
           </div>,
@@ -548,6 +541,7 @@ function SiteInfoPopup({
   onRefresh,
   onRemoveCookie,
   onClearSiteData,
+  t,
 }: {
   url: string
   isOpen: boolean
@@ -556,6 +550,7 @@ function SiteInfoPopup({
   onRefresh: () => void
   onRemoveCookie: (name: string) => void
   onClearSiteData: () => void
+  t: (key: string, opts?: Record<string, unknown>) => string
 }) {
   const popupRef = useRef<HTMLDivElement>(null)
   const [confirmClear, setConfirmClear] = useState(false)
@@ -583,7 +578,7 @@ function SiteInfoPopup({
     protocol = parsed.protocol
     isSecure = protocol === 'https:'
   } catch {
-    hostname = url || '未知站点'
+    hostname = url || t('siteInfo.unknownSite')
   }
 
   const hasValidPage = url && url !== 'about:blank'
@@ -610,17 +605,17 @@ function SiteInfoPopup({
           {isSecure ? (
             <>
               <Shield size={14} className="text-emerald-500" />
-              <span className="text-emerald-500 font-medium">连接安全</span>
+              <span className="text-emerald-500 font-medium">{t('siteInfo.secure')}</span>
             </>
           ) : hasValidPage ? (
             <>
               <AlertTriangle size={14} className="text-amber-500" />
-              <span className="text-amber-500 font-medium">连接不安全</span>
+              <span className="text-amber-500 font-medium">{t('siteInfo.insecure')}</span>
             </>
           ) : (
             <>
               <Globe size={14} className="text-nb-text-dim" />
-              <span className="text-nb-text-dim">未加载页面</span>
+              <span className="text-nb-text-dim">{t('siteInfo.noPage')}</span>
             </>
           )}
         </div>
@@ -634,13 +629,13 @@ function SiteInfoPopup({
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-semibold text-nb-text-soft flex items-center gap-1.5">
             <Database size={12} />
-            Cookie ({cookies.length})
+            {t('siteInfo.cookieCount', { count: cookies.length })}
           </span>
-          <button onClick={onRefresh} className="text-[10px] text-nb-text-dim hover:text-brand-500 transition-colors">刷新</button>
+          <button onClick={onRefresh} className="text-[10px] text-nb-text-dim hover:text-brand-500 transition-colors">{t('common.refresh')}</button>
         </div>
         {cookies.length === 0 ? (
           <div className="py-6 text-center text-nb-text-muted text-xs">
-            暂无 Cookie
+            {t('siteInfo.noCookies')}
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -653,7 +648,7 @@ function SiteInfoPopup({
                 <button
                   onClick={() => onRemoveCookie(c.name)}
                   className="shrink-0 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/10 text-nb-text-dim hover:text-red-500 transition-all duration-150"
-                  title="删除 Cookie"
+                  title={t('siteInfo.deleteCookie')}
                 >
                   <Trash2 size={11} />
                 </button>
@@ -672,7 +667,7 @@ function SiteInfoPopup({
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-red-500 hover:bg-red-500/10 disabled:text-nb-text-muted disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all duration-150"
           >
             <Trash2 size={12} />
-            清除站点数据
+            {t('siteInfo.clearSiteData')}
           </button>
         ) : (
           <div className="flex items-center gap-2">
@@ -680,13 +675,13 @@ function SiteInfoPopup({
               onClick={() => setConfirmClear(false)}
               className="flex-1 px-3 py-2 rounded-lg text-xs font-medium text-nb-text-soft hover:bg-nb-raised transition-all duration-150"
             >
-              取消
+              {t('common.cancel')}
             </button>
             <button
               onClick={() => { onClearSiteData(); setConfirmClear(false) }}
               className="flex-1 px-3 py-2 rounded-lg text-xs font-medium text-white bg-red-500 hover:bg-red-600 transition-all duration-150"
             >
-              确认清除
+              {t('siteInfo.clearConfirm')}
             </button>
           </div>
         )}
@@ -725,7 +720,7 @@ export default function App() {
 
   // ── Tabs (managed entirely in React, no IPC for basic ops) ──────────────
   const [tabs, setTabs] = useState<TabState[]>([
-    { id: INITIAL_TAB_ID, src: 'about:blank', url: '', title: '新标签页', isLoading: false, favicon: null },
+    { id: INITIAL_TAB_ID, src: 'about:blank', url: '', title: t('common.newTab'), isLoading: false, favicon: null },
   ])
   const [activeId, setActiveId] = useState<string>(INITIAL_TAB_ID)
   const activeIdRef = useRef<string>(INITIAL_TAB_ID)
@@ -749,6 +744,7 @@ export default function App() {
   const siteInfoRef = useRef<HTMLDivElement>(null)
   const [adBlockOn, setAdBlockOn]       = useState(true)
   const [agentOperating, setAgentOperating] = useState(false)
+  const [onboarded, setOnboarded]       = useState(() => hasCompletedOnboarding())
 
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
   const [history, setHistory] = useState<HistoryItem[]>([])
@@ -797,19 +793,19 @@ export default function App() {
         setChatMessagesBySession(msgs)
         setCurrentChatSessionId(currentId)
       } else {
-        const defaultSession: ChatSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
+        const defaultSession: ChatSession = { id: uuidv4(), name: t('sessions.defaultName'), createdAt: Date.now(), messages: [] }
         setChatSessions([defaultSession])
         setChatMessagesBySession({ [defaultSession.id]: [] })
         setCurrentChatSessionId(defaultSession.id)
       }
     }).catch(() => {
       // Backend not ready or no data: still ensure we have a usable sessionId
-      const fallbackSession: ChatSession = { id: uuidv4(), name: '默认会话', createdAt: Date.now(), messages: [] }
+      const fallbackSession: ChatSession = { id: uuidv4(), name: t('sessions.defaultName'), createdAt: Date.now(), messages: [] }
       setChatSessions([fallbackSession])
       setChatMessagesBySession({ [fallbackSession.id]: [] })
       setCurrentChatSessionId(fallbackSession.id)
     })
-  }, [])
+  }, [t])
 
   const persistSessions = useCallback((nextSessions: ChatSession[], nextMsgs: Record<string, ChatMessage[]>, nextCurrentId: string, immediate = false) => {
     pendingPersistRef.current = { sessions: nextSessions, msgs: nextMsgs, currentId: nextCurrentId }
@@ -837,14 +833,14 @@ export default function App() {
   }, [chatSessions, currentChatSessionId, persistSessions])
 
   const handleNewSession = useCallback(() => {
-    const newSession = { id: uuidv4(), name: `会话 ${chatSessions.length + 1}`, createdAt: Date.now(), messages: [] }
+    const newSession = { id: uuidv4(), name: t('sessions.newChatIndex', { index: chatSessions.length + 1 }), createdAt: Date.now(), messages: [] }
     const nextSessions = [newSession, ...chatSessions]
     const nextMsgs = { ...chatMessagesBySession, [newSession.id]: [] }
     setChatSessions(nextSessions)
     setChatMessagesBySession(nextMsgs)
     setCurrentChatSessionId(newSession.id)
     persistSessions(nextSessions, nextMsgs, newSession.id, true)
-  }, [chatSessions, chatMessagesBySession, persistSessions])
+  }, [chatSessions, chatMessagesBySession, persistSessions, t])
 
   const handleRenameSession = useCallback((id: string, name: string) => {
     const nextSessions = chatSessions.map(s => s.id === id ? { ...s, name } : s)
@@ -999,10 +995,10 @@ export default function App() {
   // ── Tab operations ────────────────────────────────────────────────────────
   const createTabCore = useCallback((url = '') => {
     const id = uuidv4()
-    setTabs(prev => [...prev, { id, src: url || 'about:blank', url, title: '新标签页', isLoading: false, favicon: null }])
+    setTabs(prev => [...prev, { id, src: url || 'about:blank', url, title: t('common.newTab'), isLoading: false, favicon: null }])
     setActiveId(id)
     return id
-  }, [])
+  }, [t])
 
   const createTab = useCallback((url = '') => {
     return createTabCore(url)
@@ -1012,11 +1008,11 @@ export default function App() {
 
   const closeTab = useCallback((id: string) => {
     setTabs(prev => {
-      const remaining = prev.filter(t => t.id !== id)
+      const remaining = prev.filter(tab => tab.id !== id)
       if (remaining.length === 0) {
         const newId = uuidv4()
         setActiveId(newId)
-        return [{ id: newId, src: 'about:blank', url: '', title: '新标签页', isLoading: false, favicon: null }]
+        return [{ id: newId, src: 'about:blank', url: '', title: t('common.newTab'), isLoading: false, favicon: null }]
       }
       if (activeIdRef.current === id) setActiveId(remaining[remaining.length - 1].id)
       return remaining
@@ -1029,7 +1025,7 @@ export default function App() {
     }
     webviewsRef.current.delete(id)
     webviewListenersRef.current.delete(id)
-  }, [])
+  }, [t])
 
   const switchTab = useCallback((id: string) => {
     setActiveId(id)
@@ -1172,7 +1168,7 @@ export default function App() {
         setChatMessagesBySession(prev => {
           const nextMsgs = {
             ...prev,
-            [currentChatSessionId]: [...(prev[currentChatSessionId] || []), { id: `err-${Date.now()}`, role: 'assistant' as const, content: `错误：${msg.content || '未知错误'}`, createdAt: Date.now() }]
+            [currentChatSessionId]: [...(prev[currentChatSessionId] || []), { id: `err-${Date.now()}`, role: 'assistant' as const, content: `${t('chat.errorPrefix')}${msg.content || t('chat.unknownError')}`, createdAt: Date.now() }]
           }
           persistSessions(chatSessionsRef.current, nextMsgs, currentChatSessionId, true)
           return nextMsgs
@@ -1208,7 +1204,7 @@ export default function App() {
         flushRafRef.current = null
       }
     }
-  }, [ws.onMessage, currentChatSessionId, navigate])
+  }, [ws.onMessage, currentChatSessionId, navigate, t])
 
   const handleStartStreaming = useCallback((msgId: string) => {
     streamingMsgIdRef.current = msgId
@@ -1272,7 +1268,7 @@ export default function App() {
     const off5 = eAPI.onCmdNewSession(() => {
       webviewsRef.current.clear()
       webviewListenersRef.current.clear()
-      setTabs([{ id: INITIAL_TAB_ID, src: 'about:blank', url: '', title: '新标签页', isLoading: false, favicon: null }])
+      setTabs([{ id: INITIAL_TAB_ID, src: 'about:blank', url: '', title: t('common.newTab'), isLoading: false, favicon: null }])
       setActiveId(INITIAL_TAB_ID)
     })
     const off6 = eAPI.onCmdAskAI((text) => {
@@ -1462,7 +1458,7 @@ export default function App() {
   }
   const handleSaveSession = async () => {
     if (!eAPI?.saveSession) return
-    await eAPI.saveSession(`会话 ${new Date().toLocaleString('zh-CN')}`)
+    await eAPI.saveSession(`${t('sessions.newSession')} ${formatStamp(Date.now())}`)
     await loadSavedSessions()
     setSessionDropdownOpen(false)
   }
@@ -1564,7 +1560,7 @@ export default function App() {
           <div className="relative shrink-0" ref={siteInfoRef}>
             <button
               onClick={toggleSiteInfo}
-              title="站点信息"
+              title={t('nav.siteInfo')}
               className={`p-1 rounded-lg transition-all duration-150 ${
                 currentUrl.startsWith('https:')
                   ? 'text-emerald-500 hover:bg-emerald-500/10'
@@ -1589,6 +1585,7 @@ export default function App() {
               onRefresh={refreshSiteCookies}
               onRemoveCookie={handleRemoveSiteCookie}
               onClearSiteData={handleClearSiteData}
+              t={t}
             />
           </div>
           <input ref={urlInputRef} value={urlInput} onChange={e=>setUrlInput(e.target.value)}
@@ -1607,7 +1604,7 @@ export default function App() {
           <div className="relative" ref={sessionDropRef}>
             <button
               onClick={() => { loadSavedSessions(); setSessionDropdownOpen(o => !o) }}
-              title="会话"
+              title={t('nav.sessions')}
               className={`p-2 rounded-xl transition-all duration-150 ${sessionDropdownOpen ? 'text-brand-500 bg-brand-500/10' : 'text-nb-text-dim hover:text-brand-500 hover:bg-brand-500/10'}`}
             >
               <History size={15} />
@@ -1620,13 +1617,13 @@ export default function App() {
                     className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-nb-text hover:bg-nb-card transition-colors text-left"
                   >
                     <Plus size={14} className="text-brand-500" />
-                    保存当前会话
+                    {t('sessions.saveCurrent')}
                   </button>
                 </div>
                 <div className="max-h-64 overflow-y-auto scrollbar-thin">
                   {savedSessions.length === 0 ? (
                     <div className="px-4 py-6 text-center text-sm text-nb-text-dim">
-                      暂无保存的会话
+                      {t('sessions.empty')}
                     </div>
                   ) : (
                     savedSessions.map(s => (
@@ -1634,7 +1631,7 @@ export default function App() {
                         <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleRestoreSession(s.id)}>
                           <div className="text-sm text-nb-text truncate">{s.name}</div>
                           <div className="text-xs text-nb-text-muted">
-                            {s.tabs.length} 个标签页 · {new Date(s.createdAt).toLocaleDateString('zh-CN')}
+                            {t('sessions.tabsCount', { count: s.tabs.length })} · {formatDate(new Date(s.createdAt))}
                           </div>
                         </div>
                         <button
@@ -1653,7 +1650,7 @@ export default function App() {
 
           {/* History */}
           <div className="relative">
-            <button onClick={historyOpen ? closeHistory : openHistory} title="浏览历史"
+            <button onClick={historyOpen ? closeHistory : openHistory} title={t('nav.history')}
               className={`p-2 rounded-xl transition-all duration-150 ${historyOpen ? 'text-amber-500 bg-amber-500/10' : 'text-nb-text-dim hover:text-amber-500 hover:bg-amber-500/10'}`}>
               <Clock size={15} />
             </button>
@@ -1662,7 +1659,7 @@ export default function App() {
 
           {/* Bookmarks */}
           <div className="relative">
-            <button onClick={bookmarksOpen ? closeBookmarks : openBookmarks} title="书签"
+            <button onClick={bookmarksOpen ? closeBookmarks : openBookmarks} title={t('nav.bookmarks')}
               className={`p-2 rounded-xl transition-all duration-150 ${bookmarksOpen ? 'text-emerald-500 bg-emerald-500/10' : 'text-nb-text-dim hover:text-emerald-500 hover:bg-emerald-500/10'}`}>
               <Bookmark size={15} />
             </button>
@@ -1761,7 +1758,7 @@ export default function App() {
                     if (e.key === 'Enter') findNext()
                     if (e.key === 'Escape') closeFind()
                   }}
-                  placeholder="搜索页面..."
+                  placeholder={t('nav.findPlaceholder')}
                   className="flex-1 bg-transparent text-sm text-nb-text outline-none placeholder:text-nb-text-muted"
                   autoFocus
                 />
@@ -1774,7 +1771,7 @@ export default function App() {
                   onClick={findPrevious}
                   disabled={findResult.matches === 0}
                   className="p-1 rounded hover:bg-nb-hover disabled:opacity-30 text-nb-text-dim"
-                  title="上一个"
+                  title={t('nav.findPrevious')}
                 >
                   <ChevronLeft size={16} />
                 </button>
@@ -1782,14 +1779,14 @@ export default function App() {
                   onClick={findNext}
                   disabled={findResult.matches === 0}
                   className="p-1 rounded hover:bg-nb-hover disabled:opacity-30 text-nb-text-dim"
-                  title="下一个"
+                  title={t('nav.findNext')}
                 >
                   <ChevronRight size={16} />
                 </button>
                 <button
                   onClick={closeFind}
                   className="p-1 rounded hover:bg-nb-hover text-nb-text-dim"
-                  title="关闭"
+                  title={t('common.close')}
                 >
                   <X size={16} />
                 </button>
@@ -1847,6 +1844,9 @@ export default function App() {
       {/* ── Overlays (z-50, naturally above webview) ─────────────────── */}
       {/* No hideBrowser/showBrowser needed — webview is an HTML element */}
       {settingsOpen && <SettingsModal open onClose={closeSettings} />}
+
+      {/* First-run language prompt */}
+      {!onboarded && <LanguageWelcome onDone={() => setOnboarded(true)} />}
     </div>
   )
 }

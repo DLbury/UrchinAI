@@ -17,14 +17,16 @@ async def get_translation_config():
     return {
         "model": tr.get("model") or defaults.get("model", ""),
         "provider": tr.get("provider") or defaults.get("provider", ""),
-        "targetLang": tr.get("targetLang", "中文"),
+        "targetLang": tr.get("targetLang", ""),
     }
 
 
 class TranslationConfigUpdate(BaseModel):
     model: str = ""
     provider: str = ""
-    targetLang: str = "中文"
+    # Empty means "not chosen yet" — the UI seeds it with the interface
+    # language, so a non-Chinese user is never shown "中文" by default.
+    targetLang: str = ""
 
 
 @router.put("")

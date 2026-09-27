@@ -1,5 +1,7 @@
 // In development (Vite dev server), use relative path (proxied)
 // In production: use IPC proxy when in Electron (bypasses CORS from app://), else direct fetch
+import i18n from '../i18n'
+
 const BASE = import.meta.env.DEV ? '' : 'http://127.0.0.1:8001'
 const eAPI = (typeof window !== 'undefined' && (window as any).electronAPI) as { apiRequest?: (method: string, path: string, body?: string) => Promise<unknown> } | undefined
 
@@ -32,7 +34,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     if (!res.ok) {
       const text = await res.text()
       if (DEBUG) console.error('[api] fetch FAIL:', path, res.status, text)
-      throw new Error(`${res.status} ${res.statusText}: ${text}`)
+      // FastAPI reports the reason in {"detail": ...}; prefer that over raw JSON.
+      let detail = text
+      try {
+        const parsed = JSON.parse(text)
+        if (typeof parsed?.detail === 'string') detail = parsed.detail
+      } catch { /* not JSON — keep the raw text */ }
+      throw new Error(detail)
     }
     if (DEBUG) console.log('[api] fetch OK:', path)
     return res.json() as Promise<T>
@@ -51,6 +59,13 @@ export const updateProvider = (name: string, data: { apiKey?: string; apiBase?: 
   request('/api/config/providers/' + name, { method: 'PUT', body: JSON.stringify({ name, ...data }) })
 export const deleteProvider = (name: string) =>
   request('/api/config/providers/' + name, { method: 'DELETE' })
+export interface FetchedModel { label: string; value: string; isFree: boolean }
+/** Ask the provider itself what models exist; free and paid alike. */
+export const fetchProviderModels = (name: string, apiKey?: string) =>
+  request<{ models: FetchedModel[]; count: number }>(
+    '/api/config/providers/' + name + '/models',
+    { method: 'POST', body: JSON.stringify({ apiKey: apiKey ?? '' }) },
+  )
 export const getModel = () => request<{ model: string }>('/api/config/model')
 export const updateModel = (model: string, provider?: string) =>
   request('/api/config/model', { method: 'PUT', body: JSON.stringify({ model, provider: provider ?? '' }) })
@@ -140,16 +155,16 @@ export const clearMemory = clearPromptMemory
 export const listScripts = () =>
   request<Array<{ id: string; name: string; prompt: string; icon: string }>>('/api/scripts')
 export const createScript = (name: string, prompt: string, icon?: string) =>
-  request<{ id: string; name: string; prompt: string; icon: string }>('/api/scripts', { method: 'POST', body: JSON.stringify({ name, prompt, icon: icon ?? '⚡' }) })
+  request<{ id: string; name: string; prompt: string; icon: string }>('/api/scripts', { method: 'POST', body: JSON.stringify({ name, prompt, icon: icon ?? 'script' }) })
 export const updateScript = (id: string, data: { name?: string; prompt?: string; icon?: string }) =>
   request<{ id: string; name: string; prompt: string; icon: string }>(`/api/scripts/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteScript = (id: string) => request(`/api/scripts/${id}`, { method: 'DELETE' })
 
 // Categories
 export const listCategories = () =>
-  request<Array<{ id: string; name: string; name_en: string; icon: string }>>('/api/categories')
+  request<Array<{ id: string; name: string; name_en: string; name_fa?: string; icon: string }>>('/api/categories')
 export const addCategory = (name: string, icon?: string, name_en?: string) =>
-  request<{ id: string; name: string; name_en: string; icon: string }>('/api/categories', { method: 'POST', body: JSON.stringify({ name, icon: icon ?? '📌', name_en: name_en ?? '' }) })
+  request<{ id: string; name: string; name_en: string; icon: string }>('/api/categories', { method: 'POST', body: JSON.stringify({ name, icon: icon ?? 'other', name_en: name_en ?? '' }) })
 export const updateCategory = (id: string, data: { name?: string; icon?: string; name_en?: string }) =>
   request<{ id: string; name: string; name_en: string; icon: string }>(`/api/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteCategory = (id: string) => request(`/api/categories/${id}`, { method: 'DELETE' })
@@ -161,8 +176,8 @@ export const saveChatSessions = (sessions: Array<{ id: string; name: string; cre
   request('/api/chat-sessions', { method: 'PUT', body: JSON.stringify({ sessions, currentSessionId }) })
 
 // Translation
-export const translate = (text: string) =>
-  request<{ translation: string }>('/api/translate', { method: 'POST', body: JSON.stringify({ text }) })
+export const translate = (text: string, lang: string = i18n.language) =>
+  request<{ translation: string }>('/api/translate', { method: 'POST', body: JSON.stringify({ text, lang }) })
 export const getTranslationConfig = () =>
   request<{ model: string; provider: string; targetLang: string }>('/api/config/translation')
 export const updateTranslationConfig = (data: { model: string; provider: string; targetLang: string }) =>

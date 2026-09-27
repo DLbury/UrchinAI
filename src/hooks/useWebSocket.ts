@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import i18n from '../i18n'
 import type { WSMessage } from '../types'
 
 type Status = 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -27,7 +28,7 @@ export function useWebSocket(sessionId: string) {
     // In dev mode, Vite proxies /ws to backend
     // In production, connect directly to 127.0.0.1:8001
     const host = import.meta.env.DEV ? window.location.host : '127.0.0.1:8001'
-    const wsUrl = `ws://${host}/ws/${sessionId}`
+    const wsUrl = `ws://${host}/ws/${encodeURIComponent(sessionId)}?lang=${encodeURIComponent(i18n.language)}`
     console.log('[ws] Connecting to:', wsUrl)
 
     try {

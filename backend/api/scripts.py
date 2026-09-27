@@ -5,7 +5,7 @@ import json
 import time
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from utils import atomic_write_json
@@ -13,12 +13,16 @@ from utils import atomic_write_json
 SCRIPTS_FILE = Path.home() / ".nanobot" / "scripts.json"
 router = APIRouter(prefix="/api/scripts")
 
+# Built-in quick actions. ``icon`` is a lucide icon *name* rather than an emoji;
+# the localized names/prompts live in the frontend catalogue (src/lib/scripts.ts)
+# and these values are the fallback for a fresh install.
 _DEFAULTS = [
-    {"id": "default-1", "name": "总结页面",   "prompt": "请总结当前浏览器页面的主要内容（使用 browser_get_page_content 工具）",       "icon": "📝"},
-    {"id": "default-2", "name": "截图分析",   "prompt": "请截取当前页面截图并描述你看到的内容",                                       "icon": "📸"},
-    {"id": "default-3", "name": "提取链接",   "prompt": "请列出当前页面上所有重要链接",                                               "icon": "🔗"},
-    {"id": "default-4", "name": "翻译页面",   "prompt": "请将当前页面的主要内容翻译成中文（使用 browser_get_page_content 工具读取）",  "icon": "🌐"},
-    {"id": "default-5", "name": "填写表单",   "prompt": "请帮我查看当前页面有哪些表单字段，并提示我如何填写",                        "icon": "📋"},
+    {"id": "default-1", "name": "总结页面",   "prompt": "请总结当前浏览器页面的主要内容（使用 browser_get_page_content 工具）",       "icon": "summarize"},
+    {"id": "default-2", "name": "截图分析",   "prompt": "请截取当前页面截图并描述你看到的内容",                                       "icon": "screenshot"},
+    {"id": "default-3", "name": "提取链接",   "prompt": "请列出当前页面上所有重要链接",                                               "icon": "links"},
+    {"id": "default-4", "name": "翻译页面",   "prompt": "请将当前页面的主要内容翻译成中文（使用 browser_get_page_content 工具读取）",  "icon": "translate"},
+    {"id": "default-5", "name": "填写表单",   "prompt": "请帮我查看当前页面有哪些表单字段，并提示我如何填写",                        "icon": "form"},
+    {"id": "default-6", "name": "汇总标签页", "prompt": "请总结我当前打开的所有标签页，并按主题归类",                                "icon": "allTabs"},
 ]
 
 
@@ -38,7 +42,7 @@ def _save(data: list[dict]) -> None:
 class ScriptCreate(BaseModel):
     name: str
     prompt: str
-    icon: str = "⚡"
+    icon: str = "script"
 
 
 @router.get("")

@@ -49,7 +49,7 @@ def list_categories():
 
 class CategoryCreate(BaseModel):
     name: str
-    icon: str = "📌"
+    icon: str = "other"
     name_en: str = ""
 
 
@@ -75,7 +75,7 @@ def add_category(body: CategoryCreate):
         "id": cat_id,
         "name": body.name.strip(),
         "name_en": body.name_en.strip() or body.name.strip(),
-        "icon": body.icon or "📌",
+        "icon": body.icon or "other",
     }
     custom.append(new_cat)
     data["custom"] = custom
@@ -88,6 +88,7 @@ class CategoryUpdate(BaseModel):
     name: str | None = None
     icon: str | None = None
     name_en: str | None = None
+    name_fa: str | None = None
 
 
 @router.put("/{cat_id}")
@@ -108,6 +109,8 @@ def update_category(cat_id: str, body: CategoryUpdate):
                 custom[i]["icon"] = body.icon
             if body.name_en is not None:
                 custom[i]["name_en"] = body.name_en.strip()
+            if body.name_fa is not None:
+                custom[i]["name_fa"] = body.name_fa.strip()
             data["custom"] = custom
             _save(data)
             return custom[i]
