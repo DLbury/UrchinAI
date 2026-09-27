@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 
+from agent.i18n import t
+
 logger = logging.getLogger(__name__)
 BRIDGE_URL = "http://127.0.0.1:8002"
 
@@ -34,40 +36,45 @@ async def _call(method: str, path: str, **json_body: Any) -> dict:
 class BrowserTools:
     """Async browser tool functions backed by the Electron HTTP bridge."""
 
-    def __init__(self) -> None:
-        pass  # no Playwright page needed
+    def __init__(self, lang: str = "") -> None:
+        # UI language of the current turn; these results are shown in the chat
+        # panel, so they must not stay hardcoded Chinese.
+        self.lang = lang
+
+    def _t(self, key: str, **kwargs: object) -> str:
+        return t(key, self.lang, **kwargs)
 
     async def browser_navigate(self, url: str) -> str:
         """让浏览器导航到指定 URL。"""
         res = await _call("POST", "/navigate", url=url)
         if "error" in res:
-            return f"导航失败: {res['error']}"
-        return f"已导航至 {url}，页面标题: {res.get('title', '')}"
+            return self._t("navFailed", err=res["error"])
+        return self._t("navOk", url=url, title=res.get("title", ""))
 
     async def browser_click(self, selector: str) -> str:
         """点击页面元素（支持 CSS 选择器或可见文字）。"""
         res = await _call("POST", "/click", selector=selector)
         if res.get("ok") is False:
-            return f"点击失败: {res.get('error', '元素未找到')}"
+            return self._t("clickFailed", err=res.get("error") or self._t("elementNotFound"))
         element = res.get("element", selector)
         x, y = res.get("x", "?"), res.get("y", "?")
-        return f"已点击 [{element}] 坐标({x},{y})"
+        return self._t("clickOk", el=element, x=x, y=y)
 
     async def browser_type(self, selector: str, text: str) -> str:
         """在输入框中输入文字（支持 CSS 选择器、placeholder、name 或 aria-label）。"""
         res = await _call("POST", "/type", selector=selector, text=text)
         if res.get("ok") is False:
-            return f"输入失败: {res.get('error', '元素未找到')}"
-        return f"已在 [{selector}] 输入: {text}"
+            return self._t("typeFailed", err=res.get("error") or self._t("elementNotFound"))
+        return self._t("typeOk", sel=selector, text=text)
 
     async def browser_get_text(self, selector: str = "body") -> str:
         """获取页面文字内容（敏感页面会被拦截）。"""
         current_url = await self.browser_get_url()
         if self._is_sensitive_host(current_url):
-            return "获取文字被拒绝：当前页面属于敏感站点，已禁止读取内容。"
+            return self._t("textBlocked")
         res = await _call("POST", "/get-text", selector=selector)
         if "error" in res:
-            return f"获取文字失败: {res['error']}"
+            return self._t("textFailed", err=res["error"])
         return res.get("text", "")
 
     async def browser_get_url(self) -> str:
@@ -79,8 +86,8 @@ class BrowserTools:
         """滚动页面。"""
         res = await _call("POST", "/scroll", direction=direction, amount=amount)
         if "error" in res:
-            return f"滚动失败: {res['error']}"
-        return f"已向{direction}滚动 {amount}px"
+            return self._t("scrollFailed", err=res["error"])
+        return self._t("scrollOk", dir=direction, amount=amount)
 
     # Hosts where content reading / screenshots are considered high-risk
     _SENSITIVE_HOST_PATTERNS = {
@@ -103,58 +110,56 @@ class BrowserTools:
         """在浏览器页面执行 JavaScript（敏感页面会被拦截）。"""
         current_url = await self.browser_get_url()
         if self._is_sensitive_host(current_url):
-            return (
-                "JS 执行被拒绝：当前页面属于敏感站点，"
-                "为避免安全风险，已禁止在此页面执行任意代码。"
-            )
+            return self._t("jsBlocked")
         res = await _call("POST", "/execute", javascript=javascript)
         if "error" in res:
-            return f"JS 执行失败: {res['error']}"
+            return self._t("jsFailed", err=res["error"])
         return res.get("result", "")
 
     async def browser_new_tab(self, url: str = "") -> str:
         """打开一个新的浏览器标签页，可选指定初始 URL。"""
         res = await _call("POST", "/new-tab", url=url)
         if "error" in res:
-            return f"新建标签失败: {res['error']}"
-        return f"已新建标签页" + (f"，打开 {url}" if url else "")
+            return self._t("newTabFailed", err=res["error"])
+        return self._t("newTabOk") + (self._t("newTabOpenUrl", url=url) if url else "")
 
     async def browser_close_tab(self) -> str:
         """关闭当前活动标签页。"""
         res = await _call("POST", "/close-tab")
         if "error" in res:
-            return f"关闭标签失败: {res['error']}"
-        return "已关闭当前标签页"
+            return self._t("closeTabFailed", err=res["error"])
+        return self._t("closeTabOk")
 
     async def browser_list_tabs(self) -> str:
         """列出所有已打开的标签页（id、标题、URL）。"""
         res = await _call("GET", "/tabs")
         if "error" in res:
-            return f"获取标签列表失败: {res['error']}"
+            return self._t("tabsFailed", err=res["error"])
         tabs = res.get("tabs", [])
         if not tabs:
-            return "当前没有打开的标签页"
+            return self._t("noTabs")
         lines = []
-        for t in tabs:
-            active = " ← 当前" if t.get("isActive") else ""
-            lines.append(f"[{t['id']}] {t.get('title', '无标题')} — {t.get('url', '')}{active}")
+        for tab in tabs:
+            active = self._t("activeTab") if tab.get("isActive") else ""
+            title = tab.get("title") or self._t("untitled")
+            lines.append(f"[{tab['id']}] {title} — {tab.get('url', '')}{active}")
         return "\n".join(lines)
 
     async def browser_switch_tab(self, tab_id: str) -> str:
         """切换到指定 id 的标签页。"""
         res = await _call("POST", "/switch-tab", tabId=tab_id)
         if "error" in res:
-            return f"切换标签失败: {res['error']}"
-        return f"已切换到标签 {tab_id}"
+            return self._t("switchTabFailed", err=res["error"])
+        return self._t("switchTabOk", id=tab_id)
 
     async def browser_get_dom(self) -> str:
         """获取页面所有可交互元素的编号列表（类似 page-agent 的文字 DOM），供 LLM 用 @N 定位元素（敏感页面会被拦截）。"""
         current_url = await self.browser_get_url()
         if self._is_sensitive_host(current_url):
-            return "获取 DOM 被拒绝：当前页面属于敏感站点，已禁止读取内容。"
+            return self._t("domBlocked")
         res = await _call("GET", "/get-dom")
         if "error" in res:
-            return f"获取 DOM 失败: {res['error']}"
+            return self._t("domFailed", err=res["error"])
         title = res.get("title", "")
         url   = res.get("url", "")
         count = res.get("elementCount", 0)
@@ -171,39 +176,39 @@ class BrowserTools:
         pages_below  = pixels_below / max(vh, 1)
 
         lines = [
-            f"页面标题: {title}",
+            self._t("domTitle", title=title),
             f"URL: {url}",
-            f"视口: {vw}x{vh}px",
+            self._t("domViewport", vw=vw, vh=vh),
         ]
         if pixels_above > 4:
-            lines.append(f"... 上方还有 {pixels_above}px 内容（约 {pages_above:.1f} 屏）- 可滚动查看 ...")
+            lines.append(self._t("domMoreAbove", px=pixels_above, pages=f"{pages_above:.1f}"))
         else:
-            lines.append("[页面顶部]")
-        lines.append(f"共 {count} 个可交互元素（用 @N 引用）:")
+            lines.append(self._t("domTop"))
+        lines.append(self._t("domCount", count=count))
         lines.extend(elems)
         if pixels_below > 4:
-            lines.append(f"... 下方还有 {pixels_below}px 内容（约 {pages_below:.1f} 屏）- 可滚动查看 ...")
+            lines.append(self._t("domMoreBelow", px=pixels_below, pages=f"{pages_below:.1f}"))
         else:
-            lines.append("[页面底部]")
+            lines.append(self._t("domBottom"))
         if body:
-            lines += ["", "── 页面正文 ──", body]
+            lines += ["", self._t("domBody"), body]
         return "\n".join(lines)
 
     async def browser_press_key(self, key: str = "Enter") -> str:
         """模拟键盘按键（Enter/Tab/Escape 等）。"""
         res = await _call("POST", "/press-key", key=key)
         if res.get("ok") is False:
-            return f"按键失败: {res.get('error', '')}"
-        return f"已按键: {key}"
+            return self._t("keyFailed", err=res.get("error", ""))
+        return self._t("keyOk", key=key)
 
     async def browser_screenshot(self) -> str:
         """截取当前页面的截图，以 base64 JPEG 格式返回，供视觉分析使用（敏感页面会被拦截）。"""
         current_url = await self.browser_get_url()
         if self._is_sensitive_host(current_url):
-            return "截图被拒绝：当前页面属于敏感站点，已禁止截取屏幕内容。"
+            return self._t("shotBlocked")
         res = await _call("GET", "/screenshot")
         if "error" in res:
-            return f"截图失败: {res['error']}"
+            return self._t("shotFailed", err=res["error"])
         b64 = res.get("image", "")
         w, h = res.get("width", 0), res.get("height", 0)
         return f"screenshot:{w}x{h}:data:image/jpeg;base64,{b64}"
@@ -212,11 +217,8 @@ class BrowserTools:
         """获取当前页面的主要文字内容（已去除广告/导航等噪音），用于总结或分析（敏感页面会被拦截）。"""
         current_url = await self.browser_get_url()
         if self._is_sensitive_host(current_url):
-            return "获取页面内容被拒绝：当前页面属于敏感站点，已禁止读取内容。"
+            return self._t("contentBlocked")
         res = await _call("GET", "/page-content")
         if "error" in res:
-            return f"获取内容失败: {res['error']}"
-        title = res.get("title", "")
-        url = res.get("url", "")
-        text = res.get("text", "")
-        return f"页面标题: {title}\nURL: {url}\n\n{text}"
+            return self._t("contentFailed", err=res["error"])
+        return self._t("contentHeader", title=res.get("title", ""), url=res.get("url", "")) + res.get("text", "")

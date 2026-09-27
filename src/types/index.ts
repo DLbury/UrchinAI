@@ -38,6 +38,8 @@ export interface WSMessage {
   call_id?: string
   result?: string
   files?: AttachedFile[]
+  /** Outgoing only: UI language so the backend localizes errors and replies */
+  lang?: string
 }
 
 export interface Provider {

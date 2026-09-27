@@ -11,17 +11,22 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Default preset categories
+# ``name`` is the original (Chinese) label kept for backward compatibility with
+# existing bookmarks; ``name_en`` / ``name_fa`` carry the localized labels and
+# ``icon`` is a lucide icon *name* (not an emoji) so the renderer stays
+# theme-independent. Legacy emoji values are still accepted and mapped by the
+# frontend.
 DEFAULT_CATEGORIES = [
-    {"id": "work", "name": "工作", "name_en": "Work", "icon": "💼"},
-    {"id": "study", "name": "学习", "name_en": "Study", "icon": "📚"},
-    {"id": "entertainment", "name": "娱乐", "name_en": "Entertainment", "icon": "🎬"},
-    {"id": "shopping", "name": "购物", "name_en": "Shopping", "icon": "🛒"},
-    {"id": "social", "name": "社交", "name_en": "Social", "icon": "💬"},
-    {"id": "tools", "name": "工具", "name_en": "Tools", "icon": "🔧"},
-    {"id": "news", "name": "新闻", "name_en": "News", "icon": "📰"},
-    {"id": "ai", "name": "AI", "name_en": "AI", "icon": "🤖"},
-    {"id": "finance", "name": "金融", "name_en": "Finance", "icon": "💰"},
-    {"id": "other", "name": "其他", "name_en": "Other", "icon": "📌"},
+    {"id": "work", "name": "工作", "name_en": "Work", "name_fa": "کار", "icon": "work"},
+    {"id": "study", "name": "学习", "name_en": "Study", "name_fa": "مطالعه", "icon": "study"},
+    {"id": "entertainment", "name": "娱乐", "name_en": "Entertainment", "name_fa": "سرگرمی", "icon": "entertainment"},
+    {"id": "shopping", "name": "购物", "name_en": "Shopping", "name_fa": "خرید", "icon": "shopping"},
+    {"id": "social", "name": "社交", "name_en": "Social", "name_fa": "شبکه‌های اجتماعی", "icon": "social"},
+    {"id": "tools", "name": "工具", "name_en": "Tools", "name_fa": "ابزارها", "icon": "tools"},
+    {"id": "news", "name": "新闻", "name_en": "News", "name_fa": "اخبار", "icon": "news"},
+    {"id": "ai", "name": "AI", "name_en": "AI", "name_fa": "هوش مصنوعی", "icon": "ai"},
+    {"id": "finance", "name": "金融", "name_en": "Finance", "name_fa": "مالی", "icon": "finance"},
+    {"id": "other", "name": "其他", "name_en": "Other", "name_fa": "سایر", "icon": "other"},
 ]
 
 
@@ -86,16 +91,18 @@ async def categorize_bookmark(url: str, title: str, categories: list[dict]) -> s
         Category ID (falls back to "other" on failure)
     """
     # Build category list for prompt
-    cat_list = ", ".join(f"{c['id']} ({c['name']})" for c in categories)
+    cat_list = ", ".join(
+        f"{c['id']} ({c.get('name_en') or c['name']})" for c in categories
+    )
 
-    prompt = f"""请将以下书签分类到最合适的类别。
+    prompt = f"""Classify the following bookmark into the most suitable category.
 
 URL: {url}
-标题: {title or '未知'}
+Title: {title or 'unknown'}
 
-可选分类：{cat_list}
+Available categories: {cat_list}
 
-只返回分类的 id（如 work、study 等），不要其他内容。"""
+Return only the category id (e.g. work, study) and nothing else."""
 
     try:
         provider_info = _create_categorizer_provider()

@@ -29,6 +29,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import router as config_router
+from api.provider_models import router as provider_models_router
 from api.skills import router as skills_router
 from api.mcp import router as mcp_router
 from api.bookmarks import router as bookmarks_router
@@ -39,6 +40,23 @@ from api.category import router as category_router
 from api.chat_sessions import router as chat_sessions_router
 from api.translate import router as translate_router
 from api.translate_config import router as translate_config_router
+
+
+def _t_lang(code: object) -> str:
+    """Normalize the client-supplied UI language for agent error strings."""
+    try:
+        from agent.i18n import normalize_lang
+    except ImportError:
+        return ""
+    return normalize_lang(code)
+
+
+def _t(key: str, lang: str) -> str:
+    try:
+        from agent.i18n import t
+    except ImportError:
+        return key
+    return t(key, lang)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,6 +77,7 @@ MAX_FILES_COUNT = 10
 MAX_FILE_DATA_LENGTH = 5 * 1024 * 1024  # 5 MB base64
 
 app.include_router(config_router)
+app.include_router(provider_models_router)
 app.include_router(skills_router)
 app.include_router(mcp_router)
 app.include_router(bookmarks_router)
@@ -77,6 +96,7 @@ app.include_router(translate_config_router)
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    ws_lang = _t_lang(websocket.query_params.get("lang"))
     try:
         await websocket.accept()
         logger.info("WebSocket connected: %s", session_id)
@@ -90,7 +110,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.info("Manager created for session: %s", session_id)
     except Exception as e:
         logger.error("Failed to create manager for session %s: %s", session_id, e)
-        await websocket.send_text(json.dumps({"type": "error", "message": f"Failed to initialize agent: {str(e)}"}))
+        await websocket.send_text(json.dumps({"type": "error", "message": _t("wsInitFailed", ws_lang).format(msg=str(e))}))
         await websocket.close()
         return
 
@@ -121,21 +141,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if msg_type == "chat":
                 content = data.get("content", "").strip()
                 files = data.get("files", [])
+                # UI language, so errors and the reply follow the interface
+                lang = _t_lang(data.get("lang")) or ws_lang
                 # Log file count but never the actual base64 payload
                 logger.info("[DEBUG] chat message received: content='%s', files_count=%d",
                             content[:100] if content else "", len(files) if files else 0)
                 if not content and not files:
                     continue
                 if len(content) > MAX_MESSAGE_LENGTH:
-                    await websocket.send_text(json.dumps({"type": "error", "message": "Message too long"}))
+                    await websocket.send_text(json.dumps({"type": "error", "message": _t("wsMessageTooLong", lang)}))
                     continue
                 if len(files) > MAX_FILES_COUNT:
-                    await websocket.send_text(json.dumps({"type": "error", "message": "Too many files"}))
+                    await websocket.send_text(json.dumps({"type": "error", "message": _t("wsTooManyFiles", lang)}))
                     continue
                 for f in files:
                     data_len = len(f.get("data", ""))
                     if data_len > MAX_FILE_DATA_LENGTH:
-                        await websocket.send_text(json.dumps({"type": "error", "message": "File too large"}))
+                        await websocket.send_text(json.dumps({"type": "error", "message": _t("wsFileTooLarge", lang)}))
                         continue
 
                 async with chat_lock:
@@ -153,7 +175,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     chat_task = None
 
                 async def send_chat():
-                    async for msg in manager.chat(content, files=files):
+                    async for msg in manager.chat(content, files=files, lang=lang):
                         await websocket.send_text(json.dumps(msg.to_dict()))
 
                 chat_task = asyncio.create_task(send_chat())

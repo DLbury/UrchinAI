@@ -20,7 +20,7 @@ NANOBOT_CONFIG = Path.home() / ".nanobot" / "config.json"
 NANOBOT_WORKSPACE = Path.home() / ".nanobot" / "workspace"
 
 _SYSTEM_PROMPT_BASE = """\
-你是 UrchinAI，一个通用智能体助手，可以控制浏览器完成任务。用中文回复用户。
+你是 UrchinAI，一个通用智能体助手，可以控制浏览器完成任务。
 
 【核心工作流 - 必须遵守】
 每次只调用一个工具，等待结果后再决定下一步。
@@ -54,15 +54,17 @@ _SYSTEM_PROMPT_BASE = """\
 """
 
 from agent.memory import get_prompt_memory, get_session_archive, get_skill_memory
+from agent.i18n import t, reply_language_instruction, normalize_lang
 
 _PROMPT_MEMORY = get_prompt_memory()
 _SESSION_ARCHIVE = get_session_archive()
 _SKILL_MEMORY = get_skill_memory()
 
 
-def _build_system_prompt(user_query: str = "") -> str:
+def _build_system_prompt(user_query: str = "", lang: str = "") -> str:
     """Build system prompt, appending top-k relevant prompt memories and skills."""
-    prompt = _SYSTEM_PROMPT_BASE
+    # Reply language follows the UI, not a hardcoded locale.
+    prompt = f"{reply_language_instruction(lang)}\n\n{_SYSTEM_PROMPT_BASE}"
     relevant_memories = _PROMPT_MEMORY.retrieve_relevant(user_query, top_k=3)
     if relevant_memories:
         notes = "\n".join(f"- {note}" for note in relevant_memories)
@@ -380,36 +382,57 @@ def _normalize_litellm_api_base(raw: str | None) -> str | None:
     return s.rstrip("/")
 
 
-def _format_llm_error(exc: BaseException, api_base: str | None) -> str:
+def _format_llm_error(exc: BaseException, api_base: str | None, lang: str = "") -> str:
     """User-facing hint when LiteLLM/OpenAI-compat calls fail (common: wrong apiBase → 404)."""
     msg = str(exc)
-    base = api_base or "（未设置，由模型/默认网关决定）"
+    base = api_base or t("errNoBase", lang)
     low = msg.lower()
+    # Rate limiting first: these messages often mention upstream providers and
+    # connection noise, and the actionable fix is completely different.
+    if "429" in msg or "ratelimit" in low or "rate limit" in low or "too many requests" in low:
+        return t("errRateLimit", lang, msg=_compact_error(msg))
     if "404" in msg or "not found" in low:
-        return (
-            "模型 API 返回 404：当前地址上找不到 OpenAI 兼容接口。\n"
-            f"已配置的 API Base：{base}\n"
-            "LiteLLM 会请求「API Base + /v1/chat/completions」。\n"
-            "请在本机浏览器或 curl 确认该地址能访问；常见正确示例：\n"
-            "· Ollama：http://<IP>:11434（一般无需再写 /v1）\n"
-            "· LM Studio：http://<IP>:1234/v1\n"
-            "· vLLM：http://<IP>:8000/v1\n"
-            "若 8000 端口不是推理服务（例如别的 Web 应用），请改成实际提供 /v1/chat/completions 的地址与端口。"
-        )
-    if "401" in msg or "403" in msg or "unauthorized" in low or "forbidden" in low:
-        return f"API 鉴权失败（401/403），请检查 API Key 与服务商是否匹配。\n详情：{msg}"
+        return t("err404", lang, base=base)
+    if ("401" in msg or "403" in msg or "unauthorized" in low or "forbidden" in low
+            or "authenticationerror" in low or "permissiondenied" in low
+            or "invalid api key" in low or "incorrect api key" in low
+            or "invalid_api_key" in low):
+        return t("err401", lang, msg=_compact_error(msg))
+    if "context length" in low or "context_length" in low or "too long" in low and "token" in low:
+        return t("errContextLength", lang, msg=_compact_error(msg))
     if "connection" in low or "refused" in low or "timed out" in low or "timeout" in low:
-        return (
-            f"无法连接到模型服务：{msg}\n"
-            f"请确认 API Base「{base}」在本机网络可达，且推理进程已启动。"
-        )
-    return f"模型调用失败：{msg}"
+        return t("errConnection", lang, msg=_compact_error(msg), base=base)
+    return t("errGeneric", lang, msg=_compact_error(msg))
+
+
+def _compact_error(msg: str, limit: int = 600) -> str:
+    """Trim provider JSON blobs down to something readable in a chat bubble."""
+    text = " ".join(str(msg).split())
+    if len(text) <= limit:
+        return text
+    return text[:limit] + " …"
+
+
+#: First path segments LiteLLM understands as a provider. Anything else in front
+#: of a "/" is part of the model id (vendor/route), not a provider.
+_LITELLM_PROVIDER_SEGMENTS = frozenset({
+    "openai", "anthropic", "deepseek", "gemini", "vertex_ai", "vertex_ai_beta",
+    "zai", "dashscope", "moonshot", "minimax", "volcengine", "groq", "openrouter",
+    "hosted_vllm", "azure", "azure_ai", "xai", "mistral", "cohere", "together_ai",
+    "together", "fireworks_ai", "ollama", "bedrock", "sagemaker", "perplexity",
+    "nvidia_nim", "cerebras", "openrouter_ai", "anyscale", "databricks",
+})
 
 
 def _resolve_litellm_model(model: str, provider_name: str, api_base: str | None) -> str:
     """Return a LiteLLM-compatible model string for the given config."""
-    # If the model already has a provider prefix (e.g. "openai/gpt-4"), use as-is
-    if "/" in model:
+    # Only skip prefixing when the model *already* starts with a real LiteLLM
+    # provider segment. A bare "/" is not enough: aggregator model ids contain
+    # a vendor segment too (e.g. OpenRouter "google/gemma-3-27b-it:free"), and
+    # treating that vendor as the provider is what makes LiteLLM answer
+    # "LLM Provider NOT provided".
+    head = model.split("/", 1)[0].strip().lower()
+    if head in _LITELLM_PROVIDER_SEGMENTS:
         return model
 
     # Known nanobot provider → known LiteLLM prefix
@@ -428,6 +451,13 @@ def _resolve_litellm_model(model: str, provider_name: str, api_base: str | None)
         "groq": "groq",
         "openrouter": "openrouter",
         "vllm": "hosted_vllm",
+        "together_ai": "together_ai",
+        "fireworks_ai": "fireworks_ai",
+        "ollama": "ollama_chat",
+        "xai": "xai",
+        "perplexity": "perplexity",
+        "cerebras": "cerebras",
+        "azure": "azure",
     }
     prefix = _KNOWN_PREFIXES.get(provider_name)
     if prefix is not None:
@@ -471,6 +501,8 @@ class AgentManager:
         self._session_archive = _SESSION_ARCHIVE
         self._archived_count = 0
         self._current_stream_task: asyncio.Task | None = None
+        # UI language of the latest turn; drives error text + reply language
+        self._lang: str = ""
 
     def _check_nanobot(self) -> bool:
         try:
@@ -496,12 +528,12 @@ class AgentManager:
         for turn in new_turns:
             content = turn.get("content")
             if isinstance(content, str) and "data:image/jpeg;base64," in content:
-                turn = {**turn, "content": "[截图已省略]"}
+                turn = {**turn, "content": t("imageOmitted", self._lang)}
             elif isinstance(content, list):
                 filtered = []
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "image_url":
-                        filtered.append({"type": "text", "text": "[图片已省略]"})
+                        filtered.append({"type": "text", "text": t("imageOmitted", self._lang)})
                     else:
                         filtered.append(part)
                 turn = {**turn, "content": filtered}
@@ -509,9 +541,10 @@ class AgentManager:
         await asyncio.to_thread(self._session_archive.archive_turns, self.session_id, scrubbed)
         self._archived_count = len(self._history)
 
-    async def chat(self, user_message: str, files: list | None = None) -> AsyncGenerator[AgentMessage, None]:
+    async def chat(self, user_message: str, files: list | None = None, lang: str = "") -> AsyncGenerator[AgentMessage, None]:
         """Stream agent responses for a user message."""
         self._stop_event.clear()
+        self._lang = normalize_lang(lang) if lang else self._lang
         content: list[dict] | str = user_message
         if files:
             content = [{"type": "text", "text": user_message}]
@@ -549,10 +582,10 @@ class AgentManager:
         api_base: str | None = _normalize_litellm_api_base(provider_cfg.get("apiBase", "") or None)
 
         if not model:
-            yield AgentMessage("error", "未配置模型，请在设置中选择模型。")
+            yield AgentMessage("error", t("noModel", self._lang))
             return
         if not api_key and not api_base:
-            yield AgentMessage("error", "未找到有效的服务商配置，请在设置中配置 API Key。")
+            yield AgentMessage("error", t("noProvider", self._lang))
             return
 
         resolved_model = _resolve_litellm_model(model, provider_name, api_base)
@@ -563,7 +596,7 @@ class AgentManager:
         # Browser tools available when a page is attached
         # In Electron edition, browser tools always go through the HTTP bridge
         from agent.browser_tool import BrowserTools
-        browser_tools_obj = BrowserTools()
+        browser_tools_obj = BrowserTools(lang=self._lang)
         tools = _BROWSER_TOOL_SCHEMAS + _MEMORY_TOOL_SCHEMAS
 
         # Extract the latest user text for memory retrieval
@@ -581,7 +614,7 @@ class AgentManager:
                 break
 
         # Build messages: system (with relevant memory) + history (already includes latest user turn)
-        messages: list[dict] = [{"role": "system", "content": _build_system_prompt(last_user_text)}] + self._history
+        messages: list[dict] = [{"role": "system", "content": _build_system_prompt(last_user_text, self._lang)}] + self._history
 
         raw_max_iterations = defaults.get("maxIterations")
         raw_max_tokens = defaults.get("maxTokens")
@@ -759,10 +792,10 @@ class AgentManager:
                     # Execute
                     if tool_name == "memory_add":
                         entry = _PROMPT_MEMORY.add(args.get("content", ""), args.get("tags", []))
-                        result = f"已添加记忆（ID: {entry['id']}）"
+                        result = t("memAdded", self._lang, id=entry["id"])
                     elif tool_name == "memory_remove":
                         success = _PROMPT_MEMORY.remove(args.get("entry_id", ""))
-                        result = "已删除记忆。" if success else "未找到该记忆条目。"
+                        result = t("memDeleted" if success else "memNotFound", self._lang)
                     elif tool_name == "search_history":
                         rows = _SESSION_ARCHIVE.search(args.get("query", ""), limit=args.get("limit", 5))
                         if rows:
@@ -771,16 +804,16 @@ class AgentManager:
                                 ts = r.get("created_at", 0)
                                 time_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
                                 lines.append(f"[{time_str}] {r.get('role', '')}: {r.get('content', '')}")
-                            result = "历史记录搜索结果：\n" + "\n".join(lines)
+                            result = t("archiveHeader", self._lang, lines="\n".join(lines))
                         else:
-                            result = "未找到相关历史记录。"
+                            result = t("archiveEmpty", self._lang)
                     elif tool_name == "list_skills":
                         skills = _SKILL_MEMORY.list_skills()
                         if skills:
                             lines = [f"- {s['name']}: {s['title']}" for s in skills]
-                            result = "可用技能列表：\n" + "\n".join(lines)
+                            result = t("skillsHeader", self._lang, lines="\n".join(lines))
                         else:
-                            result = "暂无可用的技能文档。"
+                            result = t("skillsEmpty", self._lang)
                     elif tool_name == "load_skill":
                         skill_content = _SKILL_MEMORY.load_skill(args.get("name", ""))
                         result = skill_content
@@ -797,7 +830,7 @@ class AgentManager:
                     ui_result = result
                     if isinstance(result, str) and result.startswith("screenshot:"):
                         parts = result.split(":", 2)
-                        ui_result = f"[截图 {parts[1] if len(parts) > 1 else ''}]"
+                        ui_result = f"[screenshot {parts[1] if len(parts) > 1 else ''}]"
 
                     yield AgentMessage("tool_result", ui_result,
                                        call_id=call_id, name=tool_name)
@@ -811,14 +844,14 @@ class AgentManager:
                         last_tool_signature = tool_sig
                     if repeated_tool_count >= 5:
                         logger.warning("Detected repeated tool loop: %s with args %s", tool_name, args)
-                        yield AgentMessage("error", f"Agent 似乎陷入了循环，连续 {repeated_tool_count} 次调用「{tool_name}」且参数相同。已自动终止，请尝试换种方式描述需求。")
+                        yield AgentMessage("error", t("errLoop", self._lang, count=repeated_tool_count, tool=tool_name))
                         return
 
                     # For screenshot results, inject as vision content for LLMs that support it
                     if isinstance(result, str) and result.startswith("screenshot:") and "data:image/jpeg;base64," in result:
                         b64_data = result.split("data:image/jpeg;base64,", 1)[1]
                         tool_content: Any = [
-                            {"type": "text", "text": "当前页面截图如下："},
+                            {"type": "text", "text": t("screenshotNote", self._lang)},
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_data}"}},
                         ]
                     else:
@@ -840,15 +873,15 @@ class AgentManager:
                 # Loop exhausted without break
                 if unlimited_iterations:
                     logger.warning("Agent stopped after an unexpectedly high number of iterations")
-                    yield AgentMessage("error", "Agent 运行了过多轮次后自动停止。你可以尝试简化需求或继续追问。")
+                    yield AgentMessage("error", t("errMaxRounds", self._lang))
                 else:
                     logger.warning("Agent stopped after reaching max_iterations=%s", max_iterations)
-                    yield AgentMessage("error", f"Agent 已达到最大迭代次数（{max_iterations} 次），任务尚未完成。你可以尝试简化需求或继续追问。")
+                    yield AgentMessage("error", t("errMaxIterations", self._lang, count=max_iterations))
                 return
 
         except Exception as exc:
             logger.exception("Streaming chat error")
-            yield AgentMessage("error", _format_llm_error(exc, api_base))
+            yield AgentMessage("error", _format_llm_error(exc, api_base, self._lang))
             return
 
         final_content = ""
@@ -860,11 +893,7 @@ class AgentManager:
 
     async def _fallback_chat(self, user_message: str) -> AsyncGenerator[AgentMessage, None]:
         """Simple fallback when litellm is not available."""
-        reply = (
-            "[litellm 未安装，无法调用大模型]\n\n"
-            f"你说：{user_message}\n\n"
-            "请安装 litellm 并配置 ~/.nanobot/config.json 启用 AI 回复。"
-        )
+        reply = f"{t('fallbackReply', self._lang)}\n\n> {user_message}"
         for word in reply.split(" "):
             yield AgentMessage("token", word + " ")
             await asyncio.sleep(0.02)

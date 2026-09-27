@@ -6,7 +6,7 @@ const http   = require('http')
 const fs     = require('fs')
 const os     = require('os')
 const { pathToFileURL } = require('url')
-const { spawn, execSync } = require('child_process')
+const { spawn, execSync, execFileSync } = require('child_process')
 
 const isDev        = !app.isPackaged
 
@@ -157,7 +157,10 @@ const NANOBOT_FX_SCRIPT = `
       box-shadow: 0 4px 28px rgba(0,0,0,0.45);
       white-space: nowrap; max-width: 440px; overflow: hidden; text-overflow: ellipsis;
       opacity: 0; transition: opacity 0.16s ease;
+      display: flex; align-items: center; gap: 7px;
     }
+    #__nb-toast svg { opacity: 0.85; }
+    #__nb-toast span { overflow: hidden; text-overflow: ellipsis; }
     #__nb-toast.nb-show { opacity: 1; }
   \`;
   (document.head || document.documentElement).appendChild(S);
@@ -174,8 +177,25 @@ const NANOBOT_FX_SCRIPT = `
   document.body.appendChild(toast);
   let toastTimer = null;
 
-  function showToast(msg, ms = 2200) {
-    toast.textContent = msg; toast.classList.add('nb-show');
+  /* Inline SVG icons (lucide-style, stroke = currentColor) so the injected
+     FX layer stays theme-independent and renders identically on every page. */
+  const TOAST_ICONS = {
+    globe:    '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/>',
+    search:   '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+    pointer:  '<path d="M4 4l7.5 17 2.3-6.6L20 12.1z"/>',
+    keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>',
+  };
+  function iconSvg(name) {
+    const body = TOAST_ICONS[name];
+    if (!body) return '';
+    return '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto">' + body + '</svg>';
+  }
+
+  /* msg is inserted as text (never HTML) so page-derived values stay inert. */
+  function showToast(msg, ms = 2200, icon = null) {
+    toast.innerHTML = icon ? iconSvg(icon) + '<span></span>' : '<span></span>';
+    toast.querySelector('span').textContent = msg;
+    toast.classList.add('nb-show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('nb-show'), ms);
   }
@@ -204,11 +224,11 @@ const NANOBOT_FX_SCRIPT = `
   /* ── Public API ── */
   window.__nbFX = {
     navigate(url) {
-      showToast('🌐 ' + url.replace(/^https?:\\/\\//, '').slice(0, 55), 3000);
+      showToast(url.replace(/^https?:\\/\\//, '').slice(0, 55), 3000, 'globe');
     },
 
     scanDOM(count) {
-      showToast('🔍 分析页面结构 · ' + count + ' 个可交互元素', 2500);
+      showToast('Analyzing page structure · ' + count + ' interactive elements', 2500, 'search');
       document.querySelectorAll('[data-nanobot-id]').forEach(e => {
         e.classList.add('__nb-scan');
         setTimeout(() => e.classList.remove('__nb-scan'), 600);
@@ -256,7 +276,7 @@ const NANOBOT_FX_SCRIPT = `
           const t = document.querySelector('[data-nanobot-id="' + elId + '"]');
           if (t) hlEl(t, 'click');
         }
-        showToast('👆 ' + label);
+        showToast(label, undefined, 'pointer');
         setTimeout(() => cur.classList.remove('nb-click'), 400);
       }, 300);
     },
@@ -266,10 +286,10 @@ const NANOBOT_FX_SCRIPT = `
         const t = document.querySelector('[data-nanobot-id="' + elId + '"]');
         if (t) hlEl(t, 'type');
       }
-      showToast('⌨️  ' + text.slice(0, 45));
+      showToast(text.slice(0, 45), undefined, 'keyboard');
     },
 
-    pressKey(key) { showToast('⌨️  ' + key, 1400); },
+    pressKey(key) { showToast(key, 1400, 'keyboard'); },
 
     /* Return current cursor center so next action can animate FROM here */
     cursorPos() {
@@ -365,6 +385,37 @@ function setupAdBlocking(sess) {
 
 // ─── Python backend ───────────────────────────────────────────────────────────
 
+/**
+ * Look for a virtualenv next to the app (or in the repo) whose Python can
+ * actually import uvicorn. Returns the interpreter path, or null.
+ */
+function findVenvPython() {
+  const exe = process.platform === 'win32' ? 'Scripts\\python.exe' : 'bin/python'
+  const roots = [
+    path.join(__dirname, '..', '.venv'),
+    path.join(__dirname, '..', 'venv'),
+    path.join(__dirname, '..', '..', 'venv'),
+    path.join(__dirname, '..', '..', '.venv'),
+  ]
+  for (const root of roots) {
+    const candidate = path.join(root, exe)
+    if (!fs.existsSync(candidate)) continue
+    try {
+      // Only accept it if the backend's dependencies are actually installed.
+      execFileSync(candidate, ['-c', 'import uvicorn, litellm, fastapi'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 30000,
+      })
+      return candidate
+    } catch (_) {
+      console.log('[backend] venv found but incomplete, skipping:', candidate)
+    }
+  }
+  return null
+}
+
+/** @suppress unused */
 function startBackend() {
   const backendDir = app.isPackaged
     ? path.join(process.resourcesPath, 'backend')
@@ -415,6 +466,33 @@ function startBackend() {
       detached: false,
     })
     backendProc.on('error', (err) => console.error('[backend] Failed to start:', err.message))
+    backendProc.on('exit', (c) => { if (c != null && c !== 0) console.log('[backend] exit code', c) })
+    return
+  }
+
+  // Prefer a project-local virtualenv: the system Python often lacks
+  // uvicorn/litellm/nanobot, which is why the backend dies on first launch.
+  const venvPython = findVenvPython()
+  if (venvPython) {
+    if (!fs.existsSync(backendDir)) {
+      console.error('[backend] Backend directory not found:', backendDir)
+      return
+    }
+    try {
+      if (process.platform === 'win32') {
+        execSync(`for /f "tokens=5" %a in ('netstat -aon ^| find ":${BACKEND_PORT}"') do taskkill /f /pid %a`, { stdio: 'ignore' })
+      } else {
+        execSync(`fuser -k ${BACKEND_PORT}/tcp 2>/dev/null || true`, { stdio: 'ignore' })
+      }
+    } catch (_) {}
+    console.log('[backend] Starting backend with venv Python:', venvPython)
+    backendProc = spawn(venvPython, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)], {
+      cwd: backendDir,
+      stdio: isDev ? 'inherit' : 'ignore',
+      windowsHide: true,
+      detached: false,
+    })
+    backendProc.on('error', (err) => console.error('[backend] Failed to start venv Python:', err.message))
     backendProc.on('exit', (c) => { if (c != null && c !== 0) console.log('[backend] exit code', c) })
     return
   }

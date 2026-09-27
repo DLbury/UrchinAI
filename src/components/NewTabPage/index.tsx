@@ -6,6 +6,9 @@ import { listCategories, getConfig, updateModel, getProviders, getSearchEngine }
 import type { ChatMessage, ChatSession } from '../../types'
 import { MessageAttachments, InputAttachments } from '../AttachmentsAdapter'
 import { ToolCallsGroup } from '../ToolCallsGroup'
+import ItemIcon from '../../lib/icons'
+import { categoryDisplayName, categoryIconName, fallbackCategorize } from '../../lib/categories'
+import { formatClock, formatMessageTime } from '../../lib/format'
 import {
   Reasoning,
   ReasoningTrigger,
@@ -14,7 +17,7 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface CategoryInfo { id: string; name: string; name_en: string; icon: string }
+interface CategoryInfo { id: string; name: string; name_en?: string; name_fa?: string; icon: string }
 
 interface BookmarkItem { url: string; title: string; favicon: string; category?: string; createdAt: number }
 interface HistoryItem  { url: string; title: string; favicon: string; visitedAt: number }
@@ -40,38 +43,21 @@ interface Props {
 
 // ── Auto-categorization (fallback when no category field) ──────────────────────
 
-const CATEGORY_RULES: { id: string; pattern: RegExp }[] = [
-  { id: "search", pattern: /google|baidu|bing|duckduckgo|sogou|yahoo|brave/ },
-  { id: "entertainment", pattern: /youtube|bilibili|netflix|iqiyi|youku|vimeo|twitch|douyin/ },
-  { id: "social", pattern: /twitter|x\.com|facebook|instagram|weibo|linkedin|tiktok|discord/ },
-  { id: "shopping", pattern: /amazon|taobao|jd\.com|tmall|pinduoduo|ebay|aliexpress|shopify/ },
-  { id: "tools", pattern: /github|gitlab|stackoverflow|npmjs|pypi|vercel|railway|cloudflare|docker/ },
-  { id: "news", pattern: /news|bbc|cnn|xinhua|sina\.com|sohu|people\.com|reuters|theguardian/ },
-  { id: "ai", pattern: /openai|chatgpt|claude|gemini|deepseek|huggingface|cohere|midjourney/ },
-  { id: "finance", pattern: /bank|alipay|paypal|finance|trading|invest|stock|fund|crypto/ },
-]
-
-function fallbackCategorize(url: string): string {
-  try {
-    const host = new URL(url).hostname.toLowerCase()
-    for (const rule of CATEGORY_RULES) {
-      if (rule.pattern.test(host)) return rule.id
-    }
-  } catch (_) {}
-  return "other"
+function fallbackCategorizeUrl(url: string): string {
+  return fallbackCategorize(url)
 }
 
 // ── Default quick links ───────────────────────────────────────────────────────
 
 const DEFAULT_LINKS = [
-  { title: 'Google',    url: 'https://google.com',       emoji: '🔍' },
-  { title: 'GitHub',    url: 'https://github.com',       emoji: '💻' },
-  { title: 'YouTube',   url: 'https://youtube.com',      emoji: '🎬' },
-  { title: 'Bilibili',  url: 'https://bilibili.com',     emoji: '🎬' },
-  { title: 'X',         url: 'https://x.com',            emoji: '💬' },
-  { title: 'ChatGPT',   url: 'https://chatgpt.com',      emoji: '🤖' },
-  { title: '百度',       url: 'https://baidu.com',        emoji: '🔍' },
-  { title: 'Wikipedia', url: 'https://wikipedia.org',    emoji: '📖' },
+  { title: 'Google',    url: 'https://google.com',       icon: 'search' },
+  { title: 'GitHub',    url: 'https://github.com',       icon: 'github' },
+  { title: 'YouTube',   url: 'https://youtube.com',      icon: 'entertainment' },
+  { title: 'Bilibili',  url: 'https://bilibili.com',     icon: 'entertainment' },
+  { title: 'X',         url: 'https://x.com',            icon: 'chat' },
+  { title: 'ChatGPT',   url: 'https://chatgpt.com',      icon: 'ai' },
+  { title: '百度',       url: 'https://baidu.com',        icon: 'search' },
+  { title: 'Wikipedia', url: 'https://wikipedia.org',    icon: 'wikipedia' },
 ]
 
 // ── Preset Models ─────────────────────────────────────────────────────────────
@@ -144,9 +130,9 @@ const PROVIDER_LABELS: Record<string, string> = {
   groq: 'Groq',
   minimax: 'MiniMax',
   moonshot: 'Moonshot',
-  zhipu: '智谱',
-  dashscope: '通义千问',
-  volcengine: '火山引擎',
+  zhipu: 'Zhipu AI',
+  dashscope: 'Qwen (DashScope)',
+  volcengine: 'Volcano Engine',
   siliconflow: 'SiliconFlow',
   aihubmix: 'AIHubMix',
   azure_openai: 'Azure OpenAI',
@@ -161,6 +147,7 @@ interface ProviderConfig { apiKey?: string; apiBase?: string; models?: { label: 
 // ── Message Bubble Component ──────────────────────────────────────────────────
 
 function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: boolean }) {
+  const { t } = useTranslation()
   const isUser = msg.role === 'user'
   const [showCopy, setShowCopy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -171,16 +158,6 @@ function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: b
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     }
-  }
-
-  const formatTime = (timestamp: number) => {
-    const date = new Date(timestamp * 1000)
-    const now = new Date()
-    const isToday = date.toDateString() === now.toDateString()
-    if (isToday) {
-      return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    }
-    return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
   const isReasoningStreaming = !!(isStreaming && msg.reasoning && !msg.content)
@@ -231,7 +208,7 @@ function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: b
             <button
               onClick={handleCopy}
               className="absolute -right-2 -top-2 p-1.5 rounded-lg bg-nb-card border border-nb-border hover:bg-nb-raised hover:border-brand-500/50 transition-all duration-150 shadow-sm hover:scale-105 active:scale-95"
-              title={copied ? '已复制' : '复制'}
+              title={copied ? t('chat.copied') : t('chat.copy')}
             >
               {copied ? <Check size={12} className="text-green-500" /> : <Copy size={12} className="text-nb-text-dim" />}
             </button>
@@ -239,7 +216,7 @@ function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: b
         </div>
         {msg.createdAt && (
           <p className={`text-[10px] text-nb-text-muted mt-1 ${isUser ? 'text-right' : 'text-left'} px-1`}>
-            {formatTime(msg.createdAt)}
+            {formatMessageTime(new Date(msg.createdAt))}
           </p>
         )}
         {msg.toolCalls && msg.toolCalls.length > 0 && (
@@ -301,7 +278,7 @@ function ModelSelector({
   }
 
   const getModelLabel = (model: string, provider: string) => {
-    if (!model) return t('chat.selectModel') || '选择模型'
+    if (!model) return t('chat.selectModel')
     if (provider) {
       const models = getProviderModels(provider)
       const found = models.find(p => p.value === model)
@@ -332,7 +309,7 @@ function ModelSelector({
         <div className="absolute bottom-full right-0 mb-2 w-60 bg-nb-card border border-nb-border rounded-lg shadow-xl z-50 overflow-hidden">
           {configuredProviders.length === 0 ? (
             <div className="p-4 text-center">
-              <p className="text-xs text-nb-text-muted mb-2">{t('chat.noProvidersConfigured') || '尚未配置服务商'}</p>
+              <p className="text-xs text-nb-text-muted mb-2">{t('chat.noProvidersConfigured')}</p>
               <button
                 onClick={() => { setOpen(false); onOpenSettings?.() }}
                 className="text-xs text-brand-400 hover:text-brand-300 transition-colors"
@@ -386,12 +363,12 @@ function ModelSelector({
 
 // ── Helper Components ─────────────────────────────────────────────────────────
 
-function SiteFavicon({ url, favicon, emoji }: { url: string; favicon?: string; emoji?: string }) {
+function SiteFavicon({ url, favicon, icon }: { url: string; favicon?: string; icon?: string }) {
   const [err, setErr] = useState(false)
   if (favicon && !err) {
     return <img src={favicon} onError={() => setErr(true)} className="w-7 h-7 object-contain" alt="" />
   }
-  if (emoji) return <span className="text-2xl leading-none">{emoji}</span>
+  if (icon) return <ItemIcon name={icon} size={24} className="text-nb-text-dim" />
   try {
     const host = new URL(url).hostname
     const gFavicon = `https://www.google.com/s2/favicons?domain=${host}&sz=64`
@@ -401,15 +378,15 @@ function SiteFavicon({ url, favicon, emoji }: { url: string; favicon?: string; e
   }
 }
 
-function QuickCard({ title, url, favicon, emoji, onNavigate }: {
-  title: string; url: string; favicon?: string; emoji?: string
+function QuickCard({ title, url, favicon, icon, onNavigate }: {
+  title: string; url: string; favicon?: string; icon?: string
   onNavigate: (url: string) => void
 }) {
   return (
     <div className="group flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-nb-raised/50 transition-all duration-150" onClick={() => onNavigate(url)}>
       <div className="w-10 h-10 rounded-xl bg-nb-card border border-nb-border/50 group-hover:border-nb-border
                       flex items-center justify-center shrink-0 transition-all duration-150 shadow-sm group-hover:shadow-md">
-        <SiteFavicon url={url} favicon={favicon} emoji={emoji} />
+        <SiteFavicon url={url} favicon={favicon} icon={icon} />
       </div>
       <span className="text-xs text-nb-text-soft group-hover:text-nb-text truncate flex-1 min-w-0 transition-colors">
         {title}
@@ -419,15 +396,14 @@ function QuickCard({ title, url, favicon, emoji, onNavigate }: {
 }
 
 function LiveClock() {
+  useTranslation()
   const [now, setNow] = useState(new Date())
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(t)
+    const id = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(id)
   }, [])
 
-  const hm  = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-  const sec = now.toLocaleTimeString('zh-CN', { second: '2-digit' }).replace(/.*:/, '')
-  const date = now.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', weekday: 'short' })
+  const { hm, sec, date } = formatClock(now)
 
   return (
     <div className="flex items-center justify-between gap-2 select-none px-1">
@@ -558,7 +534,7 @@ export default function NewTabPage({
     if ((!text && attachedFiles.length === 0) || isStreaming || wsStatus !== 'connected') return
     const userMsgId = `user-${Date.now()}`
     const assistantMsgId = `assistant-${Date.now()}`
-    const userContent = text || (attachedFiles.length > 0 ? `[上传了 ${attachedFiles.length} 个文件]` : '')
+    const userContent = text || (attachedFiles.length > 0 ? t('chat.filesUploaded', { count: attachedFiles.length }) : '')
 
     const nextMsgs: Record<string, ChatMessage[]> = {
       ...messagesRef.current,
@@ -571,8 +547,8 @@ export default function NewTabPage({
     onStartStreaming(assistantMsgId)
     setInput('')
     setAttachedFiles([])
-    send({ type: 'chat', content: userContent, files: attachedFiles.length > 0 ? attachedFiles : undefined })
-  }, [input, isStreaming, wsStatus, send, attachedFiles, currentSessionId, onMessagesChange, onStartStreaming])
+    send({ type: 'chat', content: userContent, files: attachedFiles.length > 0 ? attachedFiles : undefined, lang: i18n.language })
+  }, [input, isStreaming, wsStatus, send, attachedFiles, currentSessionId, onMessagesChange, onStartStreaming, t])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -775,15 +751,14 @@ export default function NewTabPage({
   const categoryMap = new Map(categories.map(c => [c.id, c]))
   const getCategoryDisplayName = (catId: string): string => {
     const cat = categoryMap.get(catId)
-    if (!cat) return catId
-    return i18n.language === 'zh-CN' ? cat.name : (cat.name_en || cat.name)
+    return cat ? categoryDisplayName(cat, i18n.language) : (i18n.exists(`categories.${catId}`) ? (i18n.t(`categories.${catId}`) as string) : catId)
   }
-  const getCategoryIcon = (catId: string): string => categoryMap.get(catId)?.icon || '📌'
+  const getCategoryIcon = (catId: string): string => categoryIconName(categoryMap.get(catId))
 
   const hasBookmarks = bookmarks.length > 0
   const grouped = hasBookmarks
     ? bookmarks.reduce<Record<string, BookmarkItem[]>>((acc, bm) => {
-        const cat = bm.category || fallbackCategorize(bm.url)
+        const cat = bm.category || fallbackCategorizeUrl(bm.url)
         if (!acc[cat]) acc[cat] = []
         acc[cat].push(bm)
         return acc
@@ -817,7 +792,7 @@ export default function NewTabPage({
             <div className="p-3 bg-brand-500/10 rounded-full">
               <Paperclip size={28} />
             </div>
-            <span className="text-sm font-medium">松开以上传文件</span>
+            <span className="text-sm font-medium">{t('chat.dropToUpload')}</span>
           </div>
         </div>
       )}
@@ -827,12 +802,12 @@ export default function NewTabPage({
           <div className="flex items-center justify-between px-4 py-3 border-b border-nb-border">
             <div className="flex items-center gap-2">
               <Sparkles size={16} className="text-brand-400" />
-              <span className="font-semibold text-sm">对话历史</span>
+              <span className="font-semibold text-sm">{t('newTab.chatHistory')}</span>
             </div>
             <button
               onClick={createNewSession}
               className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-dim hover:text-brand-400 transition-colors"
-              title="新建会话"
+              title={t('newTab.newSession')}
             >
               <Plus size={16} />
             </button>
@@ -845,7 +820,7 @@ export default function NewTabPage({
                 onClick={() => switchSession(session.id)}
                 onContextMenu={(e) => {
                   e.preventDefault()
-                  const menu = window.confirm(`删除会话 "${session.name}"?`)
+                  const menu = window.confirm(t('newTab.deleteSessionConfirm', { name: session.name }))
                   if (menu && sessions.length > 1) {
                     deleteSession(session.id)
                   }
@@ -917,7 +892,7 @@ export default function NewTabPage({
               className="flex items-center gap-2 w-full px-3 py-2 text-xs text-nb-text-dim hover:text-nb-text hover:bg-nb-raised rounded-lg transition-colors"
             >
               <LayoutGrid size={12} />
-              <span>{showQuickAccess ? '隐藏快速访问' : '显示快速访问'}</span>
+              <span>{showQuickAccess ? t('newTab.hideQuickAccess') : t('newTab.showQuickAccess')}</span>
             </button>
           </div>
         </div>
@@ -931,14 +906,14 @@ export default function NewTabPage({
             <button
               onClick={() => setShowSidebar(!showSidebar)}
               className="p-1.5 rounded-lg hover:bg-nb-raised text-nb-text-dim hover:text-nb-text transition-colors"
-              title={showSidebar ? '隐藏侧边栏' : '显示侧边栏'}
+              title={showSidebar ? t('newTab.hideSidebar') : t('newTab.showSidebar')}
             >
               <LayoutGrid size={16} />
             </button>
             <div className="flex items-center gap-2">
               <Bot size={16} className="text-brand-400" />
               <span className="text-sm font-semibold text-nb-text">
-                {sessions.find(s => s.id === currentSessionId)?.name || '对话'}
+                {sessions.find(s => s.id === currentSessionId)?.name || t('newTab.chatFallback')}
               </span>
             </div>
           </div>
@@ -1032,7 +1007,7 @@ export default function NewTabPage({
                 onClick={() => fileInputRef.current?.click()}
                 disabled={wsStatus !== 'connected'}
                 className="shrink-0 p-1.5 rounded-lg text-nb-text-dim hover:text-brand-500 hover:bg-brand-500/10 transition-all duration-150 disabled:opacity-50"
-                title="上传文件"
+                title={t('chat.uploadFile')}
               >
                 <Paperclip size={16} />
               </button>
@@ -1053,7 +1028,7 @@ export default function NewTabPage({
                   <button
                     onClick={stopGeneration}
                     className="absolute inset-0 shrink-0 p-2 rounded-xl bg-gradient-to-br from-red-500/20 to-red-600/20 border border-red-500/30 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center shadow-sm"
-                    title="停止生成"
+                    title={t('chat.stopGenerating')}
                   >
                     <Square size={14} className="text-red-500" />
                   </button>
@@ -1064,7 +1039,7 @@ export default function NewTabPage({
                   className="shrink-0 px-4 py-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-700 hover:from-brand-500 hover:to-brand-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150 shadow-sm hover:shadow-md hover:shadow-brand-500/20 active:scale-95 disabled:hover:shadow-none flex items-center gap-1.5"
                 >
                   <Send size={14} />
-                  <span className="text-xs font-medium">发送</span>
+                  <span className="text-xs font-medium">{t('chat.send')}</span>
                 </button>
               )}
             </div>
@@ -1107,7 +1082,7 @@ export default function NewTabPage({
                   return (
                     <div key={catId}>
                       <h3 className="text-xs font-semibold text-nb-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5 px-1">
-                        <span>{catIcon}</span>
+                        <ItemIcon name={catIcon} size={12} className="text-nb-text-dim" />
                         <span>{catName}</span>
                       </h3>
                       <div className="grid grid-cols-2 gap-1">
@@ -1134,7 +1109,7 @@ export default function NewTabPage({
                       key={i}
                       title={link.title}
                       url={link.url}
-                      emoji={link.emoji}
+                      icon={link.icon}
                       onNavigate={onNavigate}
                     />
                   ))}
